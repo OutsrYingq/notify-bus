@@ -570,18 +570,52 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
     expect(text).toContain("admin");
   });
 
-  it("renders the payload body exactly once with the shipped example config", () => {
-    // config.example.yaml is what deployers copy. A template there that
-    // re-renders a field the card already renders shows the body twice.
+  it("keeps the fallback card's own content when a template IS configured", () => {
+    // The fallback composed its body with `body || lines`, so a configured
+    // template replaced — and therefore discarded — the comment text, parent
+    // issue title and membership details. Configuring a template must not make
+    // the card less informative than leaving it unset.
+    const message = msg("issue_comment", {
+      action: "created",
+      issue: { number: 42, title: "Login broken", html_url: "u" },
+      comment: { body: "I can reproduce on Safari", html_url: "u#1" },
+    }, { action: "created" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
+    expect(text).toContain("Login broken");
+    expect(text).toContain("I can reproduce on Safari");
+    expect(text).toContain("Deploying now");
+  });
+
+  it("ships no example template that re-renders a field the card already renders", () => {
+    // config.example.yaml is what deployers copy. The cards build the payload
+    // body themselves, so an example template re-rendering it would show that
+    // body twice.
     const config = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
+    if (!config) throw new Error("config.example.yaml did not load");
+    for (const event of ["push", "pull_request", "issues", "release"]) {
+      expect([event, findTemplate(config, event)?.template]).toEqual([event, undefined]);
+    }
+  });
+
+  it("renders the payload body exactly once when a template complements it", () => {
     const body = "This PR implements the login flow.";
     const message = msg("pull_request", {
       action: "opened",
       number: 1,
-      pull_request: { title: "Add login", html_url: "u", body, user: { login: "bob" } },
+      pull_request: {
+        title: "Add login",
+        html_url: "u",
+        body,
+        user: { login: "bob" },
+        requested_reviewers: [{ login: "carol" }],
+      },
     }, { action: "opened" });
-    const template = config ? findTemplate(config, "pull_request")?.template : undefined;
+    // A template adding something the card does not render — here the requested
+    // reviewers. Re-rendering `pull_request.body` would instead show it twice.
+    const template =
+      "Review requested from {{#each payload.pull_request.requested_reviewers}}{{login}}{{/each}}";
     const text = elementMarkdown(buildCard(renderFormatted(message, template)).elements);
     expect(text.split(body).length - 1).toBe(1);
+    expect(text).toContain("Review requested from carol");
   });
 });

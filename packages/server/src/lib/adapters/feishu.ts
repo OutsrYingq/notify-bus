@@ -65,8 +65,8 @@ function mapCode(code: number, msg: string): ChannelError {
  *
  * Structure (header color, badges, layout, buttons) comes from
  * {@link buildCard} — a per-event-type builder. The body markdown comes from
- * `message.formatted?.body` (the configured template, or the render layer's
- * default) and is folded in by the builder as content.
+ * `message.formatted?.body` — the configured template's output, possibly empty
+ * — and is folded in by the builder as extra content.
  *
  * The whole card is NOT clickable — links live in explicit buttons and inline
  * markdown links only.

@@ -15,8 +15,9 @@
  *     renders a colored pill; `<font color="green">+42</font>` colors text.
  *
  * This module owns *structure* (colors, layout, buttons). The body markdown
- * comes from `message.formatted?.body` (the configured template, or the render
- * layer's default) and is folded in as extra content.
+ * comes from `message.formatted?.body` — the configured template's rendered
+ * output, or empty when no template is configured — and is folded in as extra
+ * content.
  */
 import type { EventMessage } from "../../types";
 
@@ -537,7 +538,15 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   if (orgLogin && !hasRepository) {
     lines.push(`🏢 ${md(orgLogin)}`);
   }
-  const content = body || lines.join("\n");
+  // Compose rather than replace. `lines` is this card's own rendering of the
+  // event — comment text, parent issue/PR title, membership details — and a
+  // configured template adds complementary content on top of it, which is the
+  // relationship every other builder has with `body`. Letting `body` win
+  // discarded everything above, so configuring a template made this card *less*
+  // informative than leaving it unset (#16).
+  const content = [lines.join("\n"), body]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
 
   const elements: CardElement[] = [markdown(content)];
   // Only emit a button when there's a real URL — a dead button with an empty
