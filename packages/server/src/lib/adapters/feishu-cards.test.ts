@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { buildCard } from "./feishu-cards";
+import { renderFormatted } from "../render";
+import { findTemplate, loadSeedConfig } from "../config";
 import type { EventMessage } from "../../types";
 
 /** Minimal EventMessage with a raw GitHub-shaped payload + optional formatted body. */
@@ -538,5 +540,48 @@ describe("buildCard · redundant elements are gone (#16)", () => {
     };
     walk(card.elements);
     expect(contents.some((c) => c.trim() === "")).toBe(false);
+  });
+});
+
+describe("renderFormatted -> buildCard (the production path, #16)", () => {
+  it("keeps the fallback card's enriched content", () => {
+    // Calling buildCard() directly cannot see this. renderFormatted always
+    // populated formatted.body, and buildFallbackCard composes its body with
+    // `body || lines` — so a non-empty default replaced, and therefore
+    // discarded, everything #12/#13/#14 added to the fallback card.
+    const message = msg("issue_comment", {
+      action: "created",
+      issue: { number: 42, title: "Login broken", html_url: "u" },
+      comment: { body: "I can reproduce on Safari", html_url: "u#1" },
+    }, { action: "created" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
+    expect(text).toContain("I can reproduce on Safari");
+    expect(text).toContain("Login broken");
+  });
+
+  it("keeps membership details on the fallback card", () => {
+    const message = msg("organization", {
+      action: "member_added",
+      membership: { role: "admin", user: { login: "NEW-MEMBER" } },
+      organization: { login: "someorg" },
+    }, { action: "member_added" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
+    expect(text).toContain("NEW-MEMBER");
+    expect(text).toContain("admin");
+  });
+
+  it("renders the payload body exactly once with the shipped example config", () => {
+    // config.example.yaml is what deployers copy. A template there that
+    // re-renders a field the card already renders shows the body twice.
+    const config = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
+    const body = "This PR implements the login flow.";
+    const message = msg("pull_request", {
+      action: "opened",
+      number: 1,
+      pull_request: { title: "Add login", html_url: "u", body, user: { login: "bob" } },
+    }, { action: "opened" });
+    const template = config ? findTemplate(config, "pull_request")?.template : undefined;
+    const text = elementMarkdown(buildCard(renderFormatted(message, template)).elements);
+    expect(text.split(body).length - 1).toBe(1);
   });
 });

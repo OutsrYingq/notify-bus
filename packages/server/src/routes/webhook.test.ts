@@ -108,7 +108,12 @@ describe("webhook route", () => {
     expect((json as { status: string }).status).toBe("success");
     expect(calls.length).toBe(1);
     // The rendered message reached the adapter.
-    expect(calls[0]?.formatted?.body).toContain("org/repo");
+    expect(calls[0]?.event).toBe("push");
+    expect(calls[0]?.repository.full_name).toBe("org/repo");
+    // This config configures no template, so the body is empty by default: the
+    // card builders render the event themselves, and a generic fallback body
+    // could only repeat what the card already shows (#16).
+    expect(calls[0]?.formatted?.body).toBe("");
   });
 
   it("returns success even when the adapter fails (logs, doesn't crash)", async () => {

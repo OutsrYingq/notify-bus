@@ -7,10 +7,11 @@
 # All fields are optional. Running DB-only (no config.yaml) is valid.
 #
 # NOTE on templates: the Feishu adapter builds a rich card per event type
-# (header color, buttons, stat tiles) in code. A template here only controls
-# the *body markdown* that is folded into the card — keep it short and
-# complementary to what the card already shows. Omit the template entirely
-# to use the built-in defaults. See packages/server/src/lib/adapters/feishu-cards.ts.
+# (header color, buttons, stat tiles) in code, and the card already renders the
+# payload's own title and body. A template here only *adds* body markdown on
+# top of that — so it should carry something the card does not already show.
+# Omit a template entirely and no extra body is sent. See
+# packages/server/src/lib/adapters/feishu-cards.ts.
 
 channels:
   - name: team-feishu
@@ -40,23 +41,15 @@ routes:
 # into that event type's card. The card structure (colors, buttons, commits)
 # is built in code regardless. Remove a template to use the built-in default.
 templates:
-  - event_type: push
-    template: |
-      {{#if payload.head_commit}}
-      Latest: {{payload.head_commit.message}}
-      {{/if}}
-  - event_type: pull_request
-    template: |
-      {{#if payload.pull_request.body}}
-      > {{payload.pull_request.body}}
-      {{/if}}
-  - event_type: issues
-    template: |
-      {{#if payload.issue.body}}
-      > {{payload.issue.body}}
-      {{/if}}
-  - event_type: release
-    template: |
-      {{#if payload.release.body}}
-      {{payload.release.body}}
-      {{/if}}
+  # (optional — remove this whole block if you have nothing to add)
+  #
+  # Built-in cards already render `pull_request.body`, `issue.body`,
+  # `release.body` and the pushed commit list, so a template that re-renders one
+  # of those fields makes it appear TWICE in the card. Add content the card does
+  # not already show instead (#16).
+  #
+  # Example: the PR card shows the title and a truncated body, but not who has
+  # been asked to review, so this adds only that line.
+  # - event_type: pull_request
+  #   template: |
+  #     {{#if payload.pull_request.requested_reviewers}}👥 Review requested: {{#each payload.pull_request.requested_reviewers}}{{login}} {{/each}}{{/if}}
