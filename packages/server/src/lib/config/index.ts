@@ -32,7 +32,7 @@ export interface SeedRoute {
   exclude_event?: string;
   /** Whitelist of actions (comma-separated). Omitted = all actions. */
   match_action?: string;
-  /** Blacklist of actions (comma-separated). Wins over match_action. */
+  /** Route-local blacklist of actions (comma-separated). Takes precedence over match_action for this route. */
   exclude_action?: string;
   target_channel: string; // by name, resolved to a SeedChannel at match time
   priority?: number;
