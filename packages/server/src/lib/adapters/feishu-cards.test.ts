@@ -127,6 +127,79 @@ describe("buildCard · push", () => {
   });
 });
 
+describe("buildCard · push · push state (#15)", () => {
+  it("reports total_commits, not the capped commits array length", () => {
+    // GitHub caps `payload.commits` at 20 entries; `total_commits` is the real
+    // push size. This previously read "20 commits pushed" for a 50-commit push.
+    const capped = Array.from({ length: 20 }, (_, i) => ({
+      id: `sha${i}000000`,
+      message: `commit ${i}`,
+      author: { name: "Alice" },
+    }));
+    const card = buildCard(
+      msg("push", { ref: "refs/heads/main", total_commits: 50, commits: capped }, { ref: "refs/heads/main" }),
+    );
+    expect(card.header.title).toBe("📦 50 commits pushed");
+    expect(elementMarkdown(card.elements)).toContain("📦 50 commits");
+  });
+
+  it("falls back to the commits array length when total_commits is absent", () => {
+    const card = buildCard(
+      msg("push", { ref: "refs/heads/main", commits: [{ id: "abcdefg1234", message: "one" }] }, { ref: "refs/heads/main" }),
+    );
+    expect(card.header.title).toBe("📦 1 commit pushed");
+  });
+
+  it("visibly marks a force push", () => {
+    const card = buildCard(
+      msg(
+        "push",
+        { ref: "refs/heads/main", forced: true, total_commits: 2, commits: [{ id: "abc1234567", message: "rewritten" }] },
+        { ref: "refs/heads/main" },
+      ),
+    );
+    expect(card.header.badges).toContainEqual({ text: "force push", color: "red" });
+    expect(card.header.template).toBe("red");
+  });
+
+  it("reports a deleted branch instead of '0 commits pushed'", () => {
+    const card = buildCard(
+      msg("push", { ref: "refs/heads/old", deleted: true, commits: [] }, { ref: "refs/heads/old" }),
+    );
+    expect(card.header.title).toBe("🌿 branch deleted");
+    expect(card.header.badges).toContainEqual({ text: "branch deleted", color: "red" });
+    expect(elementMarkdown(card.elements)).not.toContain("0 commits");
+  });
+
+  it("does not offer a Compare link for a deleted branch", () => {
+    // A deleted branch's `after` sha is all zeros, so the target is meaningless.
+    const compare = "https://github.com/org/repo/compare/aaa...000";
+    const card = buildCard(
+      msg("push", { ref: "refs/heads/old", deleted: true, commits: [], compare }, { ref: "refs/heads/old" }),
+    );
+    expect(findButtonUrls(card.elements)).not.toContain(compare);
+  });
+
+  it("marks a branch created by the push", () => {
+    const card = buildCard(
+      msg(
+        "push",
+        { ref: "refs/heads/new", created: true, total_commits: 1, commits: [{ id: "abc1234567", message: "init" }] },
+        { ref: "refs/heads/new" },
+      ),
+    );
+    expect(card.header.badges).toContainEqual({ text: "new branch", color: "green" });
+  });
+
+  it("leaves an ordinary push marked only as a push", () => {
+    const card = buildCard(
+      msg("push", { ref: "refs/heads/main", total_commits: 2, commits: [{ id: "abc1234567", message: "a" }] }, { ref: "refs/heads/main" }),
+    );
+    expect(card.header.badges).toEqual([{ text: "push", color: "blue" }]);
+    expect(card.header.template).toBe("blue");
+  });
+});
+
 describe("buildCard · pull_request", () => {
   const card = buildCard(
     msg(
@@ -192,6 +265,85 @@ describe("buildCard · pull_request", () => {
 
   it("puts the body in a blockquote", () => {
     expect(elementMarkdown(card.elements)).toContain("> implements the thing");
+  });
+});
+
+describe("buildCard · pull_request header reflects the action (#15)", () => {
+  const prCard = (action: string, extra: Record<string, unknown> = {}) =>
+    buildCard(
+      msg(
+        "pull_request",
+        { action, number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra } },
+        { action },
+      ),
+    );
+
+  it("keeps an open PR purple", () => {
+    expect(prCard("opened").header.template).toBe("purple");
+  });
+
+  it("uses violet when merged", () => {
+    expect(prCard("closed", { merged: true }).header.template).toBe("violet");
+  });
+
+  it("does not render a closed-without-merge PR like an open one", () => {
+    const closed = prCard("closed");
+    const opened = prCard("opened");
+    expect(closed.header.template).toBe("grey");
+    expect(closed.header.template).not.toBe(opened.header.template);
+  });
+});
+
+describe("buildCard · action badge palette (#15)", () => {
+  /** Resolve an action's badge colour through the card that actually emits it. */
+  function badgeColor(event: string, action: string): string | undefined {
+    const payload: Record<string, unknown> = { action, number: 1 };
+    if (event === "pull_request") {
+      payload.pull_request = { title: "t", html_url: "u", user: { login: "x" } };
+    }
+    return buildCard(msg(event, payload, { action })).header.badges?.[0]?.color;
+  }
+
+  it("gives an action the reader may need to act on a colour of its own", () => {
+    const actionable: [string, string, string][] = [
+      ["pull_request", "opened", "turquoise"],
+      ["pull_request", "reopened", "green"],
+      ["pull_request", "closed", "red"],
+      ["pull_request", "ready_for_review", "blue"],
+      ["pull_request", "review_requested", "orange"],
+      ["pull_request", "assigned", "indigo"],
+      ["pull_request", "converted_to_draft", "yellow"],
+      ["repository", "transferred", "carmine"],
+      ["repository", "renamed", "purple"],
+      ["repository", "publicized", "red"],
+    ];
+    for (const [event, action, color] of actionable) {
+      expect([event, action, badgeColor(event, action)]).toEqual([event, action, color]);
+    }
+  });
+
+  it("keeps routine churn neutral so it cannot read as a signal", () => {
+    const churn = [
+      "synchronize",
+      "labeled",
+      "unlabeled",
+      "unassigned",
+      "review_request_removed",
+      "milestoned",
+      "demilestoned",
+      "edited",
+      "updated",
+      "locked",
+      "unlocked",
+      "pinned",
+    ];
+    for (const action of churn) {
+      expect([action, badgeColor("pull_request", action)]).toEqual([action, "neutral"]);
+    }
+  });
+
+  it("falls back to neutral for an action it does not know", () => {
+    expect(badgeColor("pull_request", "some_future_action")).toBe("neutral");
   });
 });
 
