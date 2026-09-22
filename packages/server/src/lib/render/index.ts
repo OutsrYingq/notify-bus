@@ -11,10 +11,11 @@
  *   1. Every card builder already renders the event itself — header, actor,
  *      repo, stats — so a generic `event / Repo / User` body could only repeat
  *      what the card already shows.
- *   2. `buildFallbackCard` composes its body with `body || lines`, i.e. a
- *      non-empty body *replaces* the fallback's own content. A generic default
- *      therefore silently discarded the enriched fallback body — comment text,
- *      parent issue title, membership details — that #12/#13/#14 added.
+ *   2. The fallback card historically composed its body with `body || lines`, so
+ *      a non-empty default replaced — and therefore discarded — the enriched
+ *      fallback body that #12/#13/#14 added: comment text, parent issue title,
+ *      membership details. The fallback composes now, but an empty default is
+ *      still what stops an unconfigured deployment from repeating the header.
  *
  * M2 will replace this with the Template middleware; this module then either
  * becomes the empty-body default or is removed.

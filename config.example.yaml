@@ -37,9 +37,10 @@ routes:
   #   target_channel: team-feishu
   #   priority: 50
 
-# Templates below are OPTIONAL. Each controls only the body markdown folded
-# into that event type's card. The card structure (colors, buttons, commits)
-# is built in code regardless. Remove a template to use the built-in default.
+# Templates below are OPTIONAL. A template adds body markdown to that event
+# type's card; the card structure (colors, buttons, commits) and the payload's
+# own title and body are built in code regardless. Omit a template when you have
+# nothing to add — no extra body is sent.
 templates:
   # (optional — remove this whole block if you have nothing to add)
   #

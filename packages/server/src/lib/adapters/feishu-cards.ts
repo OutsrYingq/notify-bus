@@ -576,8 +576,9 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
 /**
  * Build a rich Feishu card for the given event, dispatching on event type.
  *
- * @param message  the fully-rendered event (formatted.body is the optional
- *                 template-rendered markdown, folded in as extra content).
+ * @param message  the rendered event. `formatted.body` carries the configured
+ *                 template's markdown — possibly empty — and is folded in as
+ *                 extra content.
  */
 export function buildCard(message: EventMessage): FeishuCard {
   const body = message.formatted?.body ?? "";
