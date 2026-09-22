@@ -221,6 +221,13 @@ function columnSet(columns: CardElement[][]): CardElement {
 
 // ─── event-specific builders ───────────────────────────────────────────────
 
+/**
+ * GitHub truncates a push payload's `commits` array at this many entries ("The
+ * array includes a maximum of 2048 commits"), so a length equal to the cap may
+ * mean "exactly this many" or "longer and cut off".
+ */
+const MAX_PUSH_COMMITS = 2048;
+
 function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
@@ -240,9 +247,13 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
 
   // The webhook push payload carries no total-count field: `total_commits` is
   // not a GitHub field (it exists on other forges), and `size`/`distinct_size`
-  // appear only on the Events API. Per GitHub's docs `commits` is capped at 2048
-  // entries, which no realistic push reaches, so its length is the push size.
-  const totalLabel = `${commits.length} commit${commits.length === 1 ? "" : "s"}`;
+  // appear only on the Events API. So the array length is the push size — but
+  // at the cap it cannot be told apart from a longer push that was truncated,
+  // so say "2048+" rather than assert a count we cannot know.
+  const totalLabel =
+    commits.length >= MAX_PUSH_COMMITS
+      ? `${MAX_PUSH_COMMITS}+ commits`
+      : `${commits.length} commit${commits.length === 1 ? "" : "s"}`;
   // A history rewrite and a branch deletion are both pushes that must not read
   // as an ordinary "N commits pushed". See #15.
   const forced = p.forced === true;

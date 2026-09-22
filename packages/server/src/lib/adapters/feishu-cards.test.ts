@@ -147,6 +147,20 @@ describe("buildCard · push · push state (#15)", () => {
     expect(elementMarkdown(card.elements)).toContain("📦 7 commits");
   });
 
+  it("does not assert an exact count when the commits array is at GitHub's cap", () => {
+    // A 2048-entry array may be exactly 2048 commits or a longer push that
+    // GitHub truncated, so the card must not claim "2048".
+    const commits = Array.from({ length: 2048 }, (_, i) => ({
+      id: `sha${i}000000`,
+      message: `commit ${i}`,
+      author: { name: "Alice" },
+    }));
+    const card = buildCard(
+      msg("push", { ref: "refs/heads/main", commits }, { ref: "refs/heads/main" }),
+    );
+    expect(card.header.title).toBe("📦 2048+ commits pushed");
+  });
+
   it("uses the singular for a one-commit push", () => {
     const card = buildCard(
       msg("push", { ref: "refs/heads/main", commits: [{ id: "abcdefg1234", message: "one" }] }, { ref: "refs/heads/main" }),
@@ -310,6 +324,19 @@ describe("buildCard · action badge palette (#15)", () => {
     }
     return buildCard(msg(event, payload, { action })).header.badges?.[0]?.color;
   }
+
+  it("applies the palette on the fallback card, not only the dedicated builders", () => {
+    // Events without a dedicated builder go through buildFallbackCard, which
+    // used to hardcode a neutral badge — silently disabling the palette for the
+    // ~30 event types that have no builder of their own. The `repository`
+    // rows above cover this too; this test exists so the coverage is explicit
+    // and cannot be lost by editing that table.
+    const card = buildCard(msg("repository", { action: "transferred" }, { action: "transferred" }));
+    // header `grey` is buildFallbackCard's signature — assert it so this test
+    // cannot silently start exercising a different builder.
+    expect(card.header.template).toBe("grey");
+    expect(card.header.badges).toContainEqual({ text: "transferred", color: "carmine" });
+  });
 
   it("gives an action the reader may need to act on a colour of its own", () => {
     const actionable: [string, string, string][] = [
