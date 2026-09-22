@@ -20,15 +20,28 @@ channels:
     enabled: true
 
 routes:
-  - name: all-events-to-team
-    match_repo: "*" # glob; '*' matches every repo
-    # match_event: push,pull_request # omit / leave null to match all events
-    # match_action: opened,closed    # omit to match all actions
-    # exclude_action: labeled,unlabeled,assigned,synchronize # blacklist; wins over match_action
+  # Quiet-by-default: only the four core event types are delivered. Add other
+  # event names here when your team wants to receive them.
+  - name: core-events-to-team
+    match_repo: "*" # `*` matches every repository
+    match_event: push,pull_request,issues,release
+    # match_action: opened,closed # omit to match all actions
+    # exclude_action is route-local: an excluded action may still match a later
+    # route, so it is safe to combine a narrow rule with a lower-priority fallback.
+    # exclude_action: labeled,unlabeled,assigned,synchronize
     target_channel: team-feishu # resolved by name to a channel above
     priority: 100 # lower = higher priority; first match wins
     enabled: true
-  # Example: get issues but silence the noisy label/assign churn.
+
+  # Example: match every event except known noise. Omit `match_event` to match
+  # all event types — unlike match_repo, event lists intentionally do not use `*`.
+  # - name: all-except-noise
+  #   match_repo: "*"
+  #   exclude_event: create,delete,label,milestone,status,check_run,check_suite,workflow_job,project,project_card,project_column,page_build,meta,security_and_analysis
+  #   target_channel: team-feishu
+  #   priority: 200
+
+  # Example: get issues but silence label/assignment churn on this route.
   # - name: issues-without-label-churn
   #   match_repo: "*"
   #   match_event: issues

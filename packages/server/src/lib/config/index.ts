@@ -28,6 +28,8 @@ export interface SeedRoute {
   name: string;
   match_repo?: string;
   match_event?: string;
+  /** Blacklist of event types (comma-separated), evaluated within this route. */
+  exclude_event?: string;
   /** Whitelist of actions (comma-separated). Omitted = all actions. */
   match_action?: string;
   /** Blacklist of actions (comma-separated). Wins over match_action. */
@@ -94,41 +96,71 @@ export interface RouteMatch {
   channel: SeedChannel;
 }
 
-/**
- * Find the first route (by ascending priority) that matches the event, and
- * resolve its target_channel to an enabled SeedChannel.
- *
- * Semantics (PRD §4.1.4): routes sorted by priority ascending (lower number =
- * higher priority); the first match wins; a disabled channel never matches.
- *
- * @returns the matched route + channel, or null if no route matches.
- */
-export function matchRoute(config: SeedConfig, event: EventMessage): RouteMatch | null {
-  const channels = config.channels ?? [];
-  const channelByName = new Map(channels.map((c) => [c.name, c]));
+interface IgnoredRoute {
+  route: SeedRoute;
+  reason: "exclude_event" | "exclude_action";
+}
 
+type RouteDecision =
+  | { kind: "matched"; match: RouteMatch }
+  | { kind: "ignored"; ignored: IgnoredRoute }
+  | { kind: "no_route" };
+
+/**
+ * Resolve an event against routes in priority order.
+ *
+ * Exclusions are route-local: an excluded high-priority route falls through so
+ * a later route may still accept the event. An `ignored` decision is returned
+ * only when no later route accepts an explicit event/action exclusion.
+ */
+export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDecision {
+  const channels = config.channels ?? [];
+  const channelByName = new Map(channels.map((channel) => [channel.name, channel]));
   const routes = (config.routes ?? [])
-    .filter((r) => r.enabled !== false)
+    .filter((route) => route.enabled !== false)
     .toSorted((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+  let ignored: IgnoredRoute | undefined;
 
   for (const route of routes) {
     if (!matchRepo(route.match_repo, event.repository.full_name)) continue;
+
     const events = splitCsv(route.match_event);
     if (!matchList(events, event.event)) continue;
-    const actions = splitCsv(route.match_action);
-    if (!matchList(actions, event.action)) continue;
-    // exclude_action wins over match_action: even if the action is included
-    // above, an explicit exclude drops it. Lets users say "issues, but not
-    // labeled/assigned" without enumerating every wanted action.
-    const excludes = splitCsv(route.exclude_action);
-    if (excludes && event.action && excludes.includes(event.action)) continue;
 
     const channel = channelByName.get(route.target_channel);
-    // No such channel, or the channel is disabled -> this route can't fire.
+    // A missing or disabled target is a configuration problem, never an ignore.
     if (!channel || channel.enabled === false) continue;
-    return { route, channel };
+
+    // The event is already inside this route's match_event domain, so an
+    // overlapping explicit exclude wins.
+    const excludedEvents = splitCsv(route.exclude_event);
+    if (excludedEvents?.includes(event.event)) {
+      ignored ??= { route, reason: "exclude_event" };
+      continue;
+    }
+
+    const actions = splitCsv(route.match_action);
+    if (!matchList(actions, event.action)) continue;
+
+    const excludedActions = splitCsv(route.exclude_action);
+    if (excludedActions && event.action && excludedActions.includes(event.action)) {
+      ignored ??= { route, reason: "exclude_action" };
+      continue;
+    }
+
+    return { kind: "matched", match: { route, channel } };
   }
-  return null;
+
+  return ignored ? { kind: "ignored", ignored } : { kind: "no_route" };
+}
+
+/**
+ * Find the first dispatchable route. This convenience API preserves the
+ * existing contract for callers that do not need to distinguish ignore/no-route.
+ */
+export function matchRoute(config: SeedConfig, event: EventMessage): RouteMatch | null {
+  const decision = resolveRoute(config, event);
+  return decision.kind === "matched" ? decision.match : null;
 }
 
 /** Find the Handlebars template for an event type (first match). M1: no

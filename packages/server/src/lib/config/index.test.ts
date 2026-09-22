@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { matchRoute, loadSeedConfig, findTemplate } from "./index";
+import { matchRoute, resolveRoute, loadSeedConfig, findTemplate } from "./index";
 import type { SeedConfig } from "./index";
 import type { EventMessage } from "../../types";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -151,6 +151,79 @@ describe("matchRoute", () => {
     expect(matchRoute(config, event({ event: "pull_request", action: "opened" }))?.route.name).toBe("pr");
     // synchronize is whitelisted by match_action but excluded -> dropped.
     expect(matchRoute(config, event({ event: "pull_request", action: "synchronize" }))).toBeNull();
+  });
+
+  it("returns ignored for an event exclusion without an action", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [{ name: "quiet", match_repo: "*", exclude_event: "create,delete", target_channel: "feishu-a" }],
+    };
+    expect(resolveRoute(config, event({ event: "create" }))).toMatchObject({
+      kind: "ignored",
+      ignored: { route: { name: "quiet" }, reason: "exclude_event" },
+    });
+  });
+
+  it("returns ignored for an action exclusion", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [{ name: "quiet-issues", match_event: "issues", exclude_action: "labeled", target_channel: "feishu-a" }],
+    };
+    expect(resolveRoute(config, event({ event: "issues", action: "labeled" }))).toMatchObject({
+      kind: "ignored",
+      ignored: { route: { name: "quiet-issues" }, reason: "exclude_action" },
+    });
+  });
+  it("lets exclude_event win inside a route's matching event domain", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [{ name: "core", match_event: "push,issues", exclude_event: "issues", target_channel: "feishu-a" }],
+    };
+    expect(resolveRoute(config, event({ event: "issues" }))).toMatchObject({ kind: "ignored" });
+    expect(resolveRoute(config, event({ event: "push" }))).toMatchObject({ kind: "matched" });
+  });
+
+  it("allows a later route to receive an event excluded by an earlier route", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [
+        { name: "quiet", match_repo: "*", exclude_event: "workflow_run", target_channel: "feishu-a", priority: 10 },
+        { name: "fallback", match_repo: "*", match_event: "workflow_run", target_channel: "feishu-b", priority: 100 },
+      ],
+    };
+    expect(resolveRoute(config, event({ event: "workflow_run" }))).toMatchObject({
+      kind: "matched",
+      match: { route: { name: "fallback" }, channel: { name: "feishu-b" } },
+    });
+  });
+
+  it("does not treat a literal '*' event list as a wildcard", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [{ name: "literal-star", match_event: "*", target_channel: "feishu-a" }],
+    };
+    expect(resolveRoute(config, event())).toEqual({ kind: "no_route" });
+  });
+
+  it("does not report a missing target as ignored", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [{ name: "missing", exclude_event: "create", target_channel: "missing" }],
+    };
+    expect(resolveRoute(config, event({ event: "create" }))).toEqual({ kind: "no_route" });
+  });
+
+  it("does not report a disabled target as ignored", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [{ name: "disabled", exclude_event: "create", target_channel: "disabled" }],
+    };
+    expect(resolveRoute(config, event({ event: "create" }))).toEqual({ kind: "no_route" });
+  });
+
+  it("ships a quiet event whitelist in config.example.yaml", () => {
+    const example = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
+    expect(example?.routes?.[0]?.match_event).toBe("push,pull_request,issues,release");
   });
 });
 

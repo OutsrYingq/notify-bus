@@ -209,3 +209,27 @@ describe("webhook route normalizes org-scoped events", () => {
     expect(calls[0]?.repository.html_url).toBe("https://github.com/lorelum");
   });
 });
+
+describe("webhook route with explicit exclusions", () => {
+  it("returns ignored and does not dispatch", async () => {
+    const { adapter, calls } = makeFakeAdapter("success");
+    const quietConfig: SeedConfig = {
+      channels: config.channels,
+      routes: [{ name: "quiet", match_repo: "*", exclude_event: "create", target_channel: "team" }],
+    };
+    const app = buildWebhookRoute({ config: quietConfig, adapters: new Map([["feishu", adapter]]), secret: SECRET });
+    const body = JSON.stringify({
+      repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
+      sender: { login: "alice", avatar_url: "" },
+      ref: "feature/x",
+      ref_type: "branch",
+    });
+    const { status, json } = await postWebhook(app, body, {
+      "x-github-event": "create",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(status).toBe(200);
+    expect(json).toMatchObject({ status: "ignored", event: "create", route: "quiet", reason: "exclude_event" });
+    expect(calls).toHaveLength(0);
+  });
+});
