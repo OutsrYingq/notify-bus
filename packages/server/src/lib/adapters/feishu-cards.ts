@@ -299,7 +299,16 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
       return `- ${headSha} ${md(firstLine(c.message))}${authorTag}`;
     });
     const overflow = commits.length - shown.length;
-    if (overflow > 0) lines.push(`_+${overflow} more commit${overflow === 1 ? "" : "s"}_`);
+    if (overflow > 0) {
+      // At GitHub's cap the payload itself may be truncated, so this line
+      // cannot claim an exact remainder — "+2043 more commits" would contradict
+      // the header's "2048+" and assert a total we cannot know (#15).
+      lines.push(
+        commits.length >= MAX_PUSH_COMMITS
+          ? `_+${overflow} more commits; the push may contain more_`
+          : `_+${overflow} more commit${overflow === 1 ? "" : "s"}_`,
+      );
+    }
     elements.push(markdown(lines.join("\n")));
   }
 

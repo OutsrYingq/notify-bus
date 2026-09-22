@@ -159,6 +159,13 @@ describe("buildCard · push · push state (#15)", () => {
       msg("push", { ref: "refs/heads/main", commits }, { ref: "refs/heads/main" }),
     );
     expect(card.header.title).toBe("📦 2048+ commits pushed");
+    // The commit list must not then contradict the header by asserting an exact
+    // remainder: at the cap we know how many the payload holds, not how many
+    // the push had.
+    const overflowLine = elementMarkdown(card.elements)
+      .split("\n")
+      .find((line) => line.includes("2043"));
+    expect(overflowLine).toContain("the push may contain more");
   });
 
   it("uses the singular for a one-commit push", () => {
