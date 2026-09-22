@@ -128,22 +128,26 @@ describe("buildCard · push", () => {
 });
 
 describe("buildCard · push · push state (#15)", () => {
-  it("reports total_commits, not the capped commits array length", () => {
-    // GitHub caps `payload.commits` at 20 entries; `total_commits` is the real
-    // push size. This previously read "20 commits pushed" for a 50-commit push.
-    const capped = Array.from({ length: 20 }, (_, i) => ({
+  it("counts the commits array — the only count the payload carries", () => {
+    // The webhook push payload has no total-count field. `total_commits` is not
+    // a GitHub field (it exists on other forges) and `size`/`distinct_size`
+    // appear only on the Events API; the 13 real top-level fields are
+    // after/base_ref/before/commits/compare/created/deleted/forced/head_commit/
+    // pusher/ref/repository/sender. Per GitHub's docs `commits` is capped at
+    // 2048 entries, so its length is the push size for any realistic push.
+    const commits = Array.from({ length: 7 }, (_, i) => ({
       id: `sha${i}000000`,
       message: `commit ${i}`,
       author: { name: "Alice" },
     }));
     const card = buildCard(
-      msg("push", { ref: "refs/heads/main", total_commits: 50, commits: capped }, { ref: "refs/heads/main" }),
+      msg("push", { ref: "refs/heads/main", commits }, { ref: "refs/heads/main" }),
     );
-    expect(card.header.title).toBe("📦 50 commits pushed");
-    expect(elementMarkdown(card.elements)).toContain("📦 50 commits");
+    expect(card.header.title).toBe("📦 7 commits pushed");
+    expect(elementMarkdown(card.elements)).toContain("📦 7 commits");
   });
 
-  it("falls back to the commits array length when total_commits is absent", () => {
+  it("uses the singular for a one-commit push", () => {
     const card = buildCard(
       msg("push", { ref: "refs/heads/main", commits: [{ id: "abcdefg1234", message: "one" }] }, { ref: "refs/heads/main" }),
     );
@@ -154,7 +158,7 @@ describe("buildCard · push · push state (#15)", () => {
     const card = buildCard(
       msg(
         "push",
-        { ref: "refs/heads/main", forced: true, total_commits: 2, commits: [{ id: "abc1234567", message: "rewritten" }] },
+        { ref: "refs/heads/main", forced: true, commits: [{ id: "abc1234567", message: "rewritten" }] },
         { ref: "refs/heads/main" },
       ),
     );
@@ -163,8 +167,11 @@ describe("buildCard · push · push state (#15)", () => {
   });
 
   it("reports a deleted branch instead of '0 commits pushed'", () => {
+    // GitHub really sends `deleted: true` together with an empty `commits` array
+    // and a null `head_commit` — its own published push payload example is a
+    // branch deletion.
     const card = buildCard(
-      msg("push", { ref: "refs/heads/old", deleted: true, commits: [] }, { ref: "refs/heads/old" }),
+      msg("push", { ref: "refs/heads/old", deleted: true, commits: [], head_commit: null }, { ref: "refs/heads/old" }),
     );
     expect(card.header.title).toBe("🌿 branch deleted");
     expect(card.header.badges).toContainEqual({ text: "branch deleted", color: "red" });
@@ -184,7 +191,7 @@ describe("buildCard · push · push state (#15)", () => {
     const card = buildCard(
       msg(
         "push",
-        { ref: "refs/heads/new", created: true, total_commits: 1, commits: [{ id: "abc1234567", message: "init" }] },
+        { ref: "refs/heads/new", created: true, commits: [{ id: "abc1234567", message: "init" }] },
         { ref: "refs/heads/new" },
       ),
     );
@@ -193,7 +200,7 @@ describe("buildCard · push · push state (#15)", () => {
 
   it("leaves an ordinary push marked only as a push", () => {
     const card = buildCard(
-      msg("push", { ref: "refs/heads/main", total_commits: 2, commits: [{ id: "abc1234567", message: "a" }] }, { ref: "refs/heads/main" }),
+      msg("push", { ref: "refs/heads/main", commits: [{ id: "abc1234567", message: "a" }] }, { ref: "refs/heads/main" }),
     );
     expect(card.header.badges).toEqual([{ text: "push", color: "blue" }]);
     expect(card.header.template).toBe("blue");

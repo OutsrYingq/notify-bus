@@ -238,10 +238,11 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
     };
   });
 
-  // GitHub caps `payload.commits` at 20 entries, so the array length is not the
-  // push size — `total_commits` is. Fall back when the field is absent.
-  const total = asNum(p.total_commits) ?? commits.length;
-  const totalLabel = `${total} commit${total === 1 ? "" : "s"}`;
+  // The webhook push payload carries no total-count field: `total_commits` is
+  // not a GitHub field (it exists on other forges), and `size`/`distinct_size`
+  // appear only on the Events API. Per GitHub's docs `commits` is capped at 2048
+  // entries, which no realistic push reaches, so its length is the push size.
+  const totalLabel = `${commits.length} commit${commits.length === 1 ? "" : "s"}`;
   // A history rewrite and a branch deletion are both pushes that must not read
   // as an ordinary "N commits pushed". See #15.
   const forced = p.forced === true;
