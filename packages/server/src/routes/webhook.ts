@@ -12,7 +12,7 @@
  */
 import { Elysia } from "elysia";
 import { verifyGitHubSignature } from "../lib/verify/github";
-import { matchRoute, findTemplate } from "../lib/config";
+import { resolveRoute, findTemplate } from "../lib/config";
 import type { SeedConfig } from "../lib/config";
 import { dispatch } from "../lib/dispatcher";
 import { renderFormatted } from "../lib/render";
@@ -134,14 +134,24 @@ export function buildWebhookRoute(deps: WebhookDeps) {
           return { status: "no_route", event: eventType, reason: "no config loaded" };
         }
 
-        const matched = matchRoute(deps.config, message);
-        if (!matched) {
+        const decision = resolveRoute(deps.config, message);
+        if (decision.kind === "no_route") {
           return {
             status: "no_route",
             event: eventType,
             repo: message.repository.full_name,
           };
         }
+        if (decision.kind === "ignored") {
+          return {
+            status: "ignored",
+            event: eventType,
+            repo: message.repository.full_name,
+            route: decision.ignored.route.name,
+            reason: decision.ignored.reason,
+          };
+        }
+        const matched = decision.match;
 
         const template = findTemplate(deps.config, eventType)?.template;
         const rendered = renderFormatted(message, template);
