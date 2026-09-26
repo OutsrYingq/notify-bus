@@ -197,6 +197,31 @@ describe("matchRoute", () => {
     });
   });
 
+  it("allows a later route to receive an action excluded by an earlier route", () => {
+    const config: SeedConfig = {
+      ...baseConfig,
+      routes: [
+        {
+          name: "quiet-issues",
+          match_event: "issues",
+          exclude_action: "labeled",
+          target_channel: "feishu-a",
+          priority: 10,
+        },
+        {
+          name: "fallback",
+          match_event: "issues",
+          target_channel: "feishu-b",
+          priority: 100,
+        },
+      ],
+    };
+    expect(resolveRoute(config, event({ event: "issues", action: "labeled" }))).toMatchObject({
+      kind: "matched",
+      match: { route: { name: "fallback" }, channel: { name: "feishu-b" } },
+    });
+  });
+
   it("does not treat a literal '*' event list as a wildcard", () => {
     const config: SeedConfig = {
       ...baseConfig,
@@ -224,6 +249,17 @@ describe("matchRoute", () => {
   it("ships a quiet event whitelist in config.example.yaml", () => {
     const example = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
     expect(example?.routes?.[0]?.match_event).toBe("push,pull_request,issues,release");
+    if (!example) throw new Error("Expected the shipped example config to load");
+
+    for (const eventType of ["push", "pull_request", "issues", "release"]) {
+      expect(resolveRoute(example, event({ event: eventType }))).toMatchObject({
+        kind: "matched",
+        match: { route: { name: "core-events-to-team" }, channel: { name: "team-feishu" } },
+      });
+    }
+    for (const eventType of ["create", "status", "check_run"]) {
+      expect(resolveRoute(example, event({ event: eventType }))).toEqual({ kind: "no_route" });
+    }
   });
 });
 
