@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { buildCard } from "./feishu-cards";
+import { renderFormatted } from "../render";
+import { findTemplate, loadSeedConfig } from "../config";
 import type { EventMessage } from "../../types";
 
 /** Minimal EventMessage with a raw GitHub-shaped payload + optional formatted body. */
@@ -453,5 +455,167 @@ describe("buildCard · schema correctness", () => {
         expect(tag).not.toBe("note");
       }
     }
+  });
+});
+
+describe("buildCard · user text is not interpreted as card markup (#16)", () => {
+  const AT = "<at id=all></at>";
+
+  /** All markdown text in the card, concatenated. */
+  const cardText = (message: EventMessage): string => elementMarkdown(buildCard(message).elements);
+
+  const pushWith = (commitMessage: string, opts: { ref?: string; author?: string } = {}): EventMessage =>
+    msg("push", {
+      ref: opts.ref ?? "refs/heads/main",
+      total_commits: 1,
+      commits: [{ id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } }],
+    }, { ref: opts.ref ?? "refs/heads/main" });
+
+  it("escapes an <at> tag smuggled through a commit message", () => {
+    const text = cardText(pushWith(AT));
+    expect(text).not.toContain(AT);
+    // Feishu's documented escaping form is the numeric entity, not `&lt;`.
+    expect(text).toContain("&#60;at id=all&#62;");
+  });
+
+  it("escapes a smuggled <font> while leaving this module's own markup intact", () => {
+    const text = cardText(pushWith("red<font color=green>greenagain</font>"));
+    expect(text).not.toContain("<font color=green>greenagain");
+    expect(text).toContain("&#60;font color=green&#62;greenagain");
+    // The author pill this module generates is still a real tag.
+    expect(text).toContain('<text_tag color="neutral">Alice</text_tag>');
+  });
+
+  it("escapes `<` in every payload field that reaches a markdown element", () => {
+    const cases: [string, EventMessage][] = [
+      ["commit.author.name", pushWith("ok", { author: AT })],
+      ["pull_request.title", msg("pull_request", { action: "opened", number: 1, pull_request: { title: AT, html_url: "u", user: { login: "x" } } }, { action: "opened" })],
+      ["pull_request.body", msg("pull_request", { action: "opened", number: 1, pull_request: { title: "t", html_url: "u", body: AT, user: { login: "x" } } }, { action: "opened" })],
+      ["pull_request.head.ref", msg("pull_request", { action: "opened", number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, head: { ref: AT }, base: { ref: "main" } } }, { action: "opened" })],
+      ["issue.title", msg("issues", { action: "opened", issue: { number: 1, title: AT, html_url: "u", user: { login: "c" } } }, { action: "opened" })],
+      ["issue.body", msg("issues", { action: "opened", issue: { number: 1, title: "t", html_url: "u", body: AT, user: { login: "c" } } }, { action: "opened" })],
+      ["issue.labels[].name", msg("issues", { action: "opened", issue: { number: 1, title: "t", html_url: "u", user: { login: "c" }, labels: [{ name: AT }] } }, { action: "opened" })],
+      ["release.body", msg("release", { action: "published", release: { name: "v1", tag_name: "v1", html_url: "u", body: AT, author: { login: "d" } } }, { action: "published" })],
+      ["comment.body", msg("issue_comment", { action: "created", issue: { number: 1, title: "t" }, comment: { body: AT, html_url: "u" } }, { action: "created" })],
+      ["membership.role", msg("organization", { action: "member_added", membership: { role: AT, user: { login: "m" } }, organization: { login: "o" } }, { action: "member_added" })],
+    ];
+    for (const [field, message] of cases) {
+      expect([field, cardText(message).includes(AT)]).toEqual([field, false]);
+    }
+  });
+
+  it("escapes a smuggled tag in the branch name of a push", () => {
+    const ref = `refs/heads/${AT}`;
+    const text = cardText(msg("push", { ref, total_commits: 1, commits: [] }, { ref }));
+    expect(text).not.toContain(AT);
+  });
+});
+
+describe("buildCard · redundant elements are gone (#16)", () => {
+  it("adds no footer note (the repo is already the header subtitle)", () => {
+    const events = ["push", "pull_request", "issues", "release", "star", "fork", "deployment"];
+    for (const event of events) {
+      const card = buildCard(msg(event, event === "pull_request" ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } } : {}));
+      const noteTexts = card.elements
+        .filter((el) => (el as { tag?: string }).tag === "div")
+        .map((el) => (el as { text?: { content?: string } }).text?.content ?? "");
+      expect([event, noteTexts.some((t) => t.includes("notify-bus"))]).toEqual([event, false]);
+    }
+  });
+
+  it("emits no whitespace-only element on the release card", () => {
+    // The release card used to build a two-column layout whose right column was
+    // a literal space, halving the author line's width for nothing. The empty
+    // column is nested inside a column_set, so this walk has to recurse.
+    const card = buildCard(
+      msg("release", { action: "published", release: { name: "v1", tag_name: "v1", html_url: "u", author: { login: "d" } } }, { action: "published" }),
+    );
+    const contents: string[] = [];
+    const walk = (els: unknown[]): void => {
+      for (const el of els) {
+        const e = el as { tag?: string; content?: string; columns?: { elements?: unknown[] }[] };
+        if (typeof e.content === "string") contents.push(e.content);
+        if (e.tag === "column_set") for (const col of e.columns ?? []) walk(col.elements ?? []);
+      }
+    };
+    walk(card.elements);
+    expect(contents.some((c) => c.trim() === "")).toBe(false);
+  });
+});
+
+describe("renderFormatted -> buildCard (the production path, #16)", () => {
+  it("keeps the fallback card's enriched content", () => {
+    // Calling buildCard() directly cannot see this. renderFormatted always
+    // populated formatted.body, and buildFallbackCard composes its body with
+    // `body || lines` — so a non-empty default replaced, and therefore
+    // discarded, everything #12/#13/#14 added to the fallback card.
+    const message = msg("issue_comment", {
+      action: "created",
+      issue: { number: 42, title: "Login broken", html_url: "u" },
+      comment: { body: "I can reproduce on Safari", html_url: "u#1" },
+    }, { action: "created" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
+    expect(text).toContain("I can reproduce on Safari");
+    expect(text).toContain("Login broken");
+  });
+
+  it("keeps membership details on the fallback card", () => {
+    const message = msg("organization", {
+      action: "member_added",
+      membership: { role: "admin", user: { login: "NEW-MEMBER" } },
+      organization: { login: "someorg" },
+    }, { action: "member_added" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
+    expect(text).toContain("NEW-MEMBER");
+    expect(text).toContain("admin");
+  });
+
+  it("keeps the fallback card's own content when a template IS configured", () => {
+    // The fallback composed its body with `body || lines`, so a configured
+    // template replaced — and therefore discarded — the comment text, parent
+    // issue title and membership details. Configuring a template must not make
+    // the card less informative than leaving it unset.
+    const message = msg("issue_comment", {
+      action: "created",
+      issue: { number: 42, title: "Login broken", html_url: "u" },
+      comment: { body: "I can reproduce on Safari", html_url: "u#1" },
+    }, { action: "created" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
+    expect(text).toContain("Login broken");
+    expect(text).toContain("I can reproduce on Safari");
+    expect(text).toContain("Deploying now");
+  });
+
+  it("ships no example template that re-renders a field the card already renders", () => {
+    // config.example.yaml is what deployers copy. The cards build the payload
+    // body themselves, so an example template re-rendering it would show that
+    // body twice.
+    const config = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
+    if (!config) throw new Error("config.example.yaml did not load");
+    for (const event of ["push", "pull_request", "issues", "release"]) {
+      expect([event, findTemplate(config, event)?.template]).toEqual([event, undefined]);
+    }
+  });
+
+  it("renders the payload body exactly once when a template complements it", () => {
+    const body = "This PR implements the login flow.";
+    const message = msg("pull_request", {
+      action: "opened",
+      number: 1,
+      pull_request: {
+        title: "Add login",
+        html_url: "u",
+        body,
+        user: { login: "bob" },
+        requested_reviewers: [{ login: "carol" }],
+      },
+    }, { action: "opened" });
+    // A template adding something the card does not render — here the requested
+    // reviewers. Re-rendering `pull_request.body` would instead show it twice.
+    const template =
+      "Review requested from {{#each payload.pull_request.requested_reviewers}}{{login}}{{/each}}";
+    const text = elementMarkdown(buildCard(renderFormatted(message, template)).elements);
+    expect(text.split(body).length - 1).toBe(1);
+    expect(text).toContain("Review requested from carol");
   });
 });

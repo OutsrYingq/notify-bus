@@ -40,7 +40,12 @@ export interface EventMessage {
   /** Output of the Template middleware — what the adapter sends. */
   formatted?: {
     title: string;
-    /** Markdown / rich-text body. */
+    /**
+     * Markdown / rich-text body: the configured template rendered against the
+     * event. Empty when no template is configured, because the card builders
+     * render the event themselves — an adapter must not assume this carries
+     * content.
+     */
     body: string;
     /** Optional structured data for interactive cards. */
     attachments?: unknown;

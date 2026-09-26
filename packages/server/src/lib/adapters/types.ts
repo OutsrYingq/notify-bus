@@ -46,7 +46,8 @@ export interface ChannelAdapter {
   /**
    * Send a message to this channel.
    *
-   * @param message  the fully-rendered event (formatted.body is populated).
+   * @param message  the rendered event. `formatted.body` holds the configured
+   *                 template's output and may be empty.
    * @param config   channel-specific config (webhook url, signing secret, ...).
    *                 Secret values come from the config DB, never env vars.
    * @returns        success or a typed failure.

@@ -15,8 +15,9 @@
  *     renders a colored pill; `<font color="green">+42</font>` colors text.
  *
  * This module owns *structure* (colors, layout, buttons). The body markdown
- * comes from `message.formatted?.body` (the configured template, or the render
- * layer's default) and is folded in as extra content.
+ * comes from `message.formatted?.body` — the configured template's rendered
+ * output, or empty when no template is configured — and is folded in as extra
+ * content.
  */
 import type { EventMessage } from "../../types";
 
@@ -114,9 +115,38 @@ function firstLine(msg: string | undefined, max = 120): string {
   return truncate(msg, max)?.split("\n")[0] ?? "";
 }
 
-/** Escape pipe so it doesn't break tables; trim whitespace. */
+/**
+ * Make a value from the GitHub payload safe to embed in card markdown.
+ *
+ * Everything user-controlled reaches the card through here: commit messages,
+ * issue/PR titles and bodies, comments, branch names, labels, logins. Feishu's
+ * card markdown recognises a set of HTML-like tags (`<at>`, `<font>`,
+ * `<text_tag>`, `<a>`, ...), so without escaping a commit message could smuggle
+ * one in and have it executed as card markup — forging styling, or (for
+ * `<at id=all>`) making the entire card fail to send (#16).
+ *
+ * Feishu's documented escaping form is the *numeric* entity (`&#60;` for `<`,
+ * `&#62;` for `>`), not the named `&lt;` / `&gt;` forms.
+ *
+ * Markup this module generates is concatenated *around* the escaped text (see
+ * {@link textTag} and {@link colored}) and never passes through here, so
+ * generated tags keep working while user-supplied ones are neutralised.
+ *
+ * Note: `>` is escaped too, which means a literal quote line inside a PR or
+ * issue body renders as text rather than as a blockquote. That is deliberate —
+ * user text should not control card layout, and the platform lists `&#62;` in
+ * its escaping table.
+ */
 function md(text: string | undefined): string {
-  return (text ?? "").replace(/\|/g, "\\|").trim();
+  return (
+    (text ?? "")
+      // `&` first, so the entities introduced below are not double-escaped.
+      .replace(/&/g, "&#38;")
+      .replace(/</g, "&#60;")
+      .replace(/>/g, "&#62;")
+      .replace(/\|/g, "\\|")
+      .trim()
+  );
 }
 
 /** A `<text_tag>` pill, for embedding inside markdown content. */
@@ -126,7 +156,7 @@ function textTag(color: TagColor, text: string): string {
 
 /** Colored inline text via `<font>`, for stats like +42 / -7. */
 function colored(color: TagColor, text: string): string {
-  return `<font color="${color}">${text}</font>`;
+  return `<font color="${color}">${md(text)}</font>`;
 }
 
 /** A markdown link, only if url is present. */
@@ -142,19 +172,6 @@ function markdown(content: string): CardElement {
 
 function hr(): CardElement {
   return { tag: "hr" };
-}
-
-/** Small grey footnote line (the v2 replacement for the removed `note`). */
-function note(content: string): CardElement {
-  return {
-    tag: "div",
-    text: {
-      tag: "plain_text",
-      content,
-      text_size: "notation",
-      text_color: "grey",
-    },
-  };
 }
 
 /** A link button that opens `url`. */
@@ -231,7 +248,7 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
 
   // Info row: author + branch | file-change stats (colored).
   const leftCol = markdown(
-    `👤 **${md(pusher)}**${branch ? `\n🔀 \`${branch}\`` : ""}`,
+    `👤 **${md(pusher)}**${branch ? `\n🔀 \`${md(branch)}\`` : ""}`,
   );
   const rightParts: string[] = [];
   if (changed > 0) {
@@ -260,7 +277,6 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
 
   if (body) elements.push(markdown(body));
 
-  elements.push(note(`in ${repo} · notify-bus`));
   if (compare) elements.push(linkButton("Compare changes", compare));
 
   return {
@@ -311,12 +327,13 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
 
   const elements: CardElement[] = [];
   elements.push(markdown(`### ${md(title)}`));
-  if (prBody) elements.push(markdown(`> ${prBody.replace(/\n/g, "\n> ")}`));
+  if (prBody) elements.push(markdown(`> ${md(prBody).replace(/\n/g, "\n> ")}`));
   if (body) elements.push(markdown(body));
 
   // Info row: author + branch flow | colored +/-/files stats.
   const leftLines = [`👤 **${md(user)}**`];
-  if (headRef && baseRef) leftLines.push(`🔀 \`${headRef}\` → \`${baseRef}\``);
+  // Branch names are user-supplied and git allows `<` / `>` in a ref name.
+  if (headRef && baseRef) leftLines.push(`🔀 \`${md(headRef)}\` → \`${md(baseRef)}\``);
   const rightLines: string[] = [];
   if (additions !== undefined) rightLines.push(colored("green", `+${additions}`));
   if (deletions !== undefined) rightLines.push(colored("red", `-${deletions}`));
@@ -324,7 +341,6 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   elements.push(hr());
   elements.push(columnSet([[markdown(leftLines.join("\n"))], [markdown(rightLines.join("  "))]]));
 
-  elements.push(note(`${repo} · notify-bus`));
   elements.push(buttonRow(
     { label: "View PR", url: prUrl, type: "primary" },
     { label: "View files", url: `${prUrl}/files`, type: "default" },
@@ -362,7 +378,7 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
 
   const elements: CardElement[] = [];
   elements.push(markdown(`### ${md(title)}`));
-  if (issueBody) elements.push(markdown(`> ${issueBody.replace(/\n/g, "\n> ")}`));
+  if (issueBody) elements.push(markdown(`> ${md(issueBody).replace(/\n/g, "\n> ")}`));
   if (body) elements.push(markdown(body));
 
   // Info row: author | labels (up to 3 colored pills). When there are no
@@ -379,7 +395,6 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
     elements.push(markdown(`👤 **${md(user)}**`));
   }
 
-  elements.push(note(`${repo} · notify-bus`));
   elements.push(linkButton("View Issue", issueUrl));
 
   return {
@@ -408,15 +423,14 @@ function buildReleaseCard(message: EventMessage, body: string): FeishuCard {
 
   const elements: CardElement[] = [];
   elements.push(markdown(`### ${md(name)}`));
-  if (relBody) elements.push(markdown(relBody));
+  if (relBody) elements.push(markdown(md(relBody)));
   if (body) elements.push(markdown(body));
 
   elements.push(hr());
   const rightLines = [`👤 **${md(author)}**`];
   if (assetCount > 0) rightLines.push(`📦 ${assetCount} asset${assetCount === 1 ? "" : "s"}`);
-  elements.push(columnSet([[markdown(rightLines.join("\n"))], [markdown(" ")]]));
+  elements.push(markdown(rightLines.join("\n")));
 
-  elements.push(note(`${repo} · notify-bus`));
   elements.push(linkButton("View Release", releaseUrl));
 
   const badges: HeaderBadge[] = [];
@@ -445,7 +459,6 @@ function buildStarCard(message: EventMessage, body: string): FeishuCard {
     markdown(`**${md(actor)}** ${verb} ⭐ ${maybeLink(repo, repoUrl)}`),
   ];
   if (body) elements.push(markdown(body));
-  elements.push(note("notify-bus"));
   elements.push(linkButton("View Repo", repoUrl, "default"));
 
   return {
@@ -466,7 +479,6 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
     markdown(`**${md(actor)}** forked 🍴\n${maybeLink(repo, repoUrl)} → ${maybeLink(forkeeName, forkeeUrl)}`),
   ];
   if (body) elements.push(markdown(body));
-  elements.push(note("notify-bus"));
   elements.push(linkButton("View Repo", repoUrl, "default"));
 
   return {
@@ -508,7 +520,7 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
     lines.push(`### ${md(discussionTitle)}`);
   }
   if (commentBody) {
-    lines.push(`> ${commentBody.replace(/\n/g, "\n> ")}`);
+    lines.push(`> ${md(commentBody).replace(/\n/g, "\n> ")}`);
   }
 
   // membership.user (member added/removed) + role.
@@ -518,7 +530,7 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   const memberRole = asStr(membership.role);
   if (memberLogin) {
     const memberUrl = asStr(memberUser.html_url);
-    lines.push(`👤 ${memberUrl ? `[${md(memberLogin)}](${memberUrl})` : `**${md(memberLogin)}**`}${memberRole ? ` · \`${memberRole}\`` : ""}`);
+    lines.push(`👤 ${memberUrl ? `[${md(memberLogin)}](${memberUrl})` : `**${md(memberLogin)}**`}${memberRole ? ` · \`${md(memberRole)}\`` : ""}`);
   } else {
     lines.push(`👤 **${md(message.actor.login)}**`);
   }
@@ -526,10 +538,17 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   if (orgLogin && !hasRepository) {
     lines.push(`🏢 ${md(orgLogin)}`);
   }
-  const content = body || lines.join("\n");
+  // Compose rather than replace. `lines` is this card's own rendering of the
+  // event — comment text, parent issue/PR title, membership details — and a
+  // configured template adds complementary content on top of it, which is the
+  // relationship every other builder has with `body`. Letting `body` win
+  // discarded everything above, so configuring a template made this card *less*
+  // informative than leaving it unset (#16).
+  const content = [lines.join("\n"), body]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
 
   const elements: CardElement[] = [markdown(content)];
-  elements.push(note(`${repo} · notify-bus`));
   // Only emit a button when there's a real URL — a dead button with an empty
   // default_url does nothing when clicked (#6). Label reflects the target:
   // a comment link if present, else the repo (repo events) / org (org events).
@@ -557,8 +576,9 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
 /**
  * Build a rich Feishu card for the given event, dispatching on event type.
  *
- * @param message  the fully-rendered event (formatted.body is the optional
- *                 template-rendered markdown, folded in as extra content).
+ * @param message  the rendered event. `formatted.body` carries the configured
+ *                 template's markdown — possibly empty — and is folded in as
+ *                 extra content.
  */
 export function buildCard(message: EventMessage): FeishuCard {
   const body = message.formatted?.body ?? "";

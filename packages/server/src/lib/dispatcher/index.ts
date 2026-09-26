@@ -20,7 +20,8 @@ export function seedChannelToConfig(channel: SeedChannel): Readonly<Record<strin
 /**
  * Dispatch an event to its matched channel via the registry.
  *
- * @param message       the fully-rendered event (formatted.body populated)
+ * @param message       the rendered event: `formatted.body` holds the template
+ *                      output and may be empty when no template is configured
  * @param channel       the matched seed channel from config
  * @param adapters      the adapter registry (channel type -> adapter)
  * @param channelId     synthetic id (M1: index; M3: DB id)
