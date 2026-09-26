@@ -164,6 +164,152 @@ function maybeLink(label: string, url: string | undefined): string {
   return url ? `[${md(label)}](${url})` : md(label);
 }
 
+// ─── payload field resolution ──────────────────────────────────────────────
+//
+// GitHub reports "what an event is about" in a different field for every event
+// shape. The fallback card used to read exactly one of them
+// (`membership.user`) and fall back to the sender, which silently named the
+// wrong person — `member` keeps the affected user in `member`, and
+// `member_invited` has no `membership` object at all (#17).
+
+/** Where each event keeps the person it is about. */
+const SUBJECT_FIELD: Record<string, string> = {
+  member: "member",
+  membership: "member",
+  org_block: "blocked_user",
+};
+
+/**
+ * Who an event is about.
+ *
+ * The last two variants must stay distinct. `unnamed` means the event is about
+ * a person the payload does not name, so naming the actor would assert
+ * something the payload never said; `not-a-person-event` means the event is not
+ * about anyone (`create`, `delete`, `workflow_run`, ...), where naming the
+ * actor is correct. Collapsing them would either name the wrong person or print
+ * "unknown" across the ~30 event types that have no dedicated builder.
+ */
+type EventSubject =
+  | { kind: "login"; login: string; htmlUrl?: string }
+  /** Identified only by email — the address itself is never surfaced. */
+  | { kind: "email-invite" }
+  | { kind: "unnamed" }
+  | { kind: "not-a-person-event" };
+
+function resolveEventSubject(
+  event: string,
+  payload: Record<string, unknown>,
+): EventSubject {
+  if (event === "organization") {
+    // member_added / member_removed carry `membership`. member_invited has no
+    // `membership` at all; it puts the invitee in a top-level `user`, which —
+    // unlike `invitation` — also carries an html_url.
+    const membershipUser = asObj(asObj(payload.membership).user);
+    const invitedUser = asObj(payload.user);
+    const invitation = asObj(payload.invitation);
+    const login =
+      asStr(membershipUser.login) ?? asStr(invitedUser.login) ?? asStr(invitation.login);
+    if (login) {
+      return {
+        kind: "login",
+        login,
+        htmlUrl: asStr(membershipUser.html_url) ?? asStr(invitedUser.html_url),
+      };
+    }
+    // With only `invitation.email` left, the card says a person was invited
+    // without printing the address: a Feishu card is visible to everyone in the
+    // group, and an email is not public information.
+    if (asStr(invitation.email)) return { kind: "email-invite" };
+    return { kind: "unnamed" };
+  }
+
+  const field = SUBJECT_FIELD[event];
+  if (field === undefined) return { kind: "not-a-person-event" };
+  const person = asObj(payload[field]);
+  const login = asStr(person.login);
+  if (!login) return { kind: "unnamed" };
+  return { kind: "login", login, htmlUrl: asStr(person.html_url) };
+}
+
+/** Context around a membership change that the payload exposes. */
+interface MembershipDetails {
+  /** `active` or `pending` — joined, or the invitation is still outstanding. */
+  state?: string;
+  role?: string;
+  /** Who sent the invitation. */
+  inviterLogin?: string;
+  /** Which team, for team membership and `team` / `team_add` events. */
+  teamName?: string;
+  teamUrl?: string;
+  /**
+   * The *previous* permission on `member` action `edited`. GitHub does not send
+   * the new one, so this has to be worded as the old value — presenting it as
+   * the current permission would be wrong.
+   */
+  previousPermission?: string;
+}
+
+function resolveMembershipDetails(
+  payload: Record<string, unknown>,
+): MembershipDetails {
+  const membership = asObj(payload.membership);
+  const team = asObj(payload.team);
+  const invitation = asObj(payload.invitation);
+  const oldPermission = asObj(asObj(payload.changes).old_permission);
+  return {
+    state: asStr(membership.state),
+    role: asStr(membership.role),
+    inviterLogin: asStr(asObj(invitation.inviter).login),
+    teamName: asStr(team.name),
+    teamUrl: asStr(team.html_url),
+    previousPermission: asStr(oldPermission.from),
+  };
+}
+
+/** Colours cycled through for issue/PR label pills. */
+const LABEL_COLORS: TagColor[] = ["blue", "turquoise", "orange", "violet", "green"];
+
+/** How many label pills a card shows before summarising the rest. */
+const MAX_LABELS = 3;
+
+/**
+ * Render labels as coloured pills, stating how many were left out.
+ *
+ * Issues used to render `labels.slice(0, 3)` with no remainder, so a card with
+ * ten labels looked exactly like a card with three (#17).
+ */
+function renderLabels(labels: readonly string[]): string {
+  const shown = labels
+    .slice(0, MAX_LABELS)
+    .map((label, i) => textTag(LABEL_COLORS[i % LABEL_COLORS.length]!, label));
+  const overflow = labels.length - shown.length;
+  return `🏷️ ${shown.join(" ")}${overflow > 0 ? ` +${overflow} more` : ""}`;
+}
+
+/** Where a card's single button should point. */
+interface PrimaryLink {
+  url: string;
+  label: string;
+}
+
+/**
+ * Pick the most specific target available: the comment the event is about, else
+ * the repo (or the org, for org-scoped events).
+ *
+ * Returns null when there is no usable URL — a button with an empty
+ * `default_url` does nothing when clicked (#6).
+ */
+function resolvePrimaryLink(
+  payload: Record<string, unknown>,
+  repoUrl: string,
+): PrimaryLink | null {
+  const commentUrl = asStr(asObj(payload.comment).html_url);
+  if (commentUrl) return { url: commentUrl, label: "View Comment" };
+  if (!repoUrl) return null;
+  const hasRepository = payload.repository !== undefined && payload.repository !== null;
+  return { url: repoUrl, label: hasRepository ? "View Repo" : "View Org" };
+}
+
 // ─── element constructors ──────────────────────────────────────────────────
 
 function markdown(content: string): CardElement {
@@ -418,6 +564,9 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   const baseRef = asStr(asObj(pr.base).ref);
   const merged = Boolean(pr.merged);
   const draft = Boolean(pr.draft);
+  const labels = asArr(pr.labels)
+    .map((l) => asStr(asObj(l).name))
+    .filter(Boolean) as string[];
 
   const elements: CardElement[] = [];
   elements.push(markdown(`### ${md(title)}`));
@@ -434,6 +583,9 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   if (changedFiles !== undefined) rightLines.push(`📁 ${changedFiles} file${changedFiles === 1 ? "" : "s"}`);
   elements.push(hr());
   elements.push(columnSet([[markdown(leftLines.join("\n"))], [markdown(rightLines.join("  "))]]));
+  // Issues have always shown their labels; PRs showed none at all, for the same
+  // repository concept (#17).
+  if (labels.length > 0) elements.push(markdown(renderLabels(labels)));
 
   elements.push(buttonRow(
     { label: "View PR", url: prUrl, type: "primary" },
@@ -475,15 +627,13 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
   if (issueBody) elements.push(markdown(`> ${md(issueBody).replace(/\n/g, "\n> ")}`));
   if (body) elements.push(markdown(body));
 
-  // Info row: author | labels (up to 3 colored pills). When there are no
-  // labels, render the author full-width instead of an empty label column.
-  const labelColors: TagColor[] = ["blue", "turquoise", "orange", "violet", "green"];
+  // Info row: author | labels. When there are no labels, render the author
+  // full-width instead of an empty label column.
   elements.push(hr());
   if (labels.length > 0) {
-    const labelText = `🏷️ ${labels.slice(0, 3).map((l, i) => textTag(labelColors[i % labelColors.length]!, l)).join(" ")}`;
     elements.push(columnSet([
       [markdown(`👤 **${md(user)}**`)],
-      [markdown(labelText)],
+      [markdown(renderLabels(labels))],
     ]));
   } else {
     elements.push(markdown(`👤 **${md(user)}**`));
@@ -566,14 +716,20 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
   const repoUrl = message.repository.html_url;
   const actor = message.actor.login;
   const forkee = asObj(message.payload.forkee);
-  const forkeeUrl = asStr(forkee.html_url) ?? repoUrl;
+  const forkeeUrl = asStr(forkee.html_url);
   const forkeeName = asStr(forkee.full_name) ?? "a fork";
 
   const elements: CardElement[] = [
-    markdown(`**${md(actor)}** forked 🍴\n${maybeLink(repo, repoUrl)} → ${maybeLink(forkeeName, forkeeUrl)}`),
+    markdown(`**${md(actor)}** forked 🍴\n${maybeLink(repo, repoUrl)} → ${maybeLink(forkeeName, forkeeUrl ?? repoUrl)}`),
   ];
   if (body) elements.push(markdown(body));
-  elements.push(linkButton("View Repo", repoUrl, "default"));
+  // The body reads "A → B(fork)", so the button has to open the fork. It used
+  // to point at the upstream repo, making the button and the text disagree
+  // (#17). Without a forkee url there is no fork to open, so it falls back to
+  // the upstream repo and says so.
+  elements.push(
+    linkButton(forkeeUrl ? "View Fork" : "View Repo", forkeeUrl ?? repoUrl, "default"),
+  );
 
   return {
     header: { title: `🍴 forked`, subtitle: repo, template: "wathet" },
@@ -600,7 +756,6 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   // discussion_comment all nest a `comment` (or `discussion`) with a body.
   const comment = asObj(p.comment);
   const commentBody = truncate(asStr(comment.body), 300);
-  const commentUrl = asStr(comment.html_url);
   // The parent issue/PR for issue_comment.
   const issue = asObj(p.issue);
   const issueTitle = asStr(issue.title);
@@ -617,16 +772,36 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
     lines.push(`> ${md(commentBody).replace(/\n/g, "\n> ")}`);
   }
 
-  // membership.user (member added/removed) + role.
-  const membership = asObj(p.membership);
-  const memberUser = asObj(membership.user);
-  const memberLogin = asStr(memberUser.login);
-  const memberRole = asStr(membership.role);
-  if (memberLogin) {
-    const memberUrl = asStr(memberUser.html_url);
-    lines.push(`👤 ${memberUrl ? `[${md(memberLogin)}](${memberUrl})` : `**${md(memberLogin)}**`}${memberRole ? ` · \`${md(memberRole)}\`` : ""}`);
+  // Who the event is about. Only an event that is *not* about a person may name
+  // the actor — otherwise the card asserts something the payload never said
+  // (#17).
+  const subject = resolveEventSubject(message.event, p);
+  const details = resolveMembershipDetails(p);
+  if (subject.kind === "login") {
+    const who = subject.htmlUrl
+      ? `[${md(subject.login)}](${subject.htmlUrl})`
+      : `**${md(subject.login)}**`;
+    const role = details.role ? ` · \`${md(details.role)}\`` : "";
+    const state = details.state ? ` · ${md(details.state)}` : "";
+    lines.push(`👤 ${who}${role}${state}`);
+  } else if (subject.kind === "email-invite") {
+    // Deliberately not the address — see `resolveEventSubject`.
+    lines.push("👤 a user invited by email");
+  } else if (subject.kind === "unnamed") {
+    lines.push("👤 unknown");
   } else {
     lines.push(`👤 **${md(message.actor.login)}**`);
+  }
+  if (details.inviterLogin) {
+    lines.push(`✉️ invited by **${md(details.inviterLogin)}**`);
+  }
+  if (details.teamName) {
+    lines.push(`🏷️ team ${maybeLink(details.teamName, details.teamUrl)}`);
+  }
+  if (details.previousPermission) {
+    // Only the previous value exists in the payload, so this must not read as
+    // the current permission.
+    lines.push(`⚠️ permission changed (previously \`${md(details.previousPermission)}\`)`);
   }
   const orgLogin = asStr(asObj(p.organization).login);
   if (orgLogin && !hasRepository) {
@@ -643,18 +818,10 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
     .join("\n\n");
 
   const elements: CardElement[] = [markdown(content)];
-  // Only emit a button when there's a real URL — a dead button with an empty
-  // default_url does nothing when clicked (#6). Label reflects the target:
-  // a comment link if present, else the repo (repo events) / org (org events).
-  const buttonUrl = commentUrl || repoUrl;
-  if (buttonUrl) {
-    const label = commentUrl
-      ? "View Comment"
-      : hasRepository
-        ? "View Repo"
-        : "View Org";
-    elements.push(linkButton(label, buttonUrl, "default"));
-  }
+  // Only emit a button when there is a real URL — a dead button does nothing
+  // when clicked (#6).
+  const link = resolvePrimaryLink(p, repoUrl);
+  if (link) elements.push(linkButton(link.label, link.url, "default"));
 
   return {
     header: {

@@ -25,6 +25,11 @@ function msg(
   };
 }
 
+/** `n` GitHub-shaped labels, for the label-rendering tests. */
+function someLabels(n: number): { name: string }[] {
+  return Array.from({ length: n }, (_, i) => ({ name: `label-${i}` }));
+}
+
 /** Recursively collect button open_url destinations from elements + columns. */
 function findButtonUrls(elements: unknown[]): string[] {
   const urls: string[] = [];
@@ -537,12 +542,14 @@ describe("buildCard · fallback", () => {
     expect(elementMarkdown(card.elements)).toContain("custom body");
   });
 
-  it("surfaces membership.user + role for member events", () => {
-    const card = buildCard(msg("member", {
-      action: "added",
-      membership: { role: "member", user: { login: "newperson", html_url: "https://github.com/newperson" } },
+  it("surfaces the org member and role for an `organization` event", () => {
+    // `organization` is the event that carries `membership` — see the subject
+    // tests below for the events that do not.
+    const card = buildCard(msg("organization", {
+      action: "member_added",
+      membership: { role: "member", state: "active", user: { login: "newperson", html_url: "https://github.com/newperson" } },
       organization: { login: "someorg" },
-    }, { action: "added" }));
+    }, { action: "member_added" }));
     const text = elementMarkdown(card.elements);
     expect(text).toContain("newperson");
     expect(text).toContain("`member`"); // role
@@ -810,5 +817,204 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
     const text = elementMarkdown(buildCard(renderFormatted(message, template)).elements);
     expect(text.split(body).length - 1).toBe(1);
     expect(text).toContain("Review requested from carol");
+  });
+});
+
+describe("buildCard · event subject (#17)", () => {
+  /**
+   * Exercise the real production path — template render, then card assembly.
+   * Calling buildCard() directly cannot see the template/composition layer.
+   */
+  function cardText(
+    event: string,
+    payload: Record<string, unknown>,
+    action?: string,
+  ): string {
+    return elementMarkdown(
+      buildCard(renderFormatted(msg(event, payload, { action }), undefined)).elements,
+    );
+  }
+
+  // The actor on every fixture is `alice`, so `not.toContain("alice")` is a
+  // direct assertion that the card did not blame the sender.
+
+  it("names the org member for `organization` member_added", () => {
+    const text = cardText("organization", {
+      action: "member_added",
+      membership: {
+        state: "active",
+        role: "member",
+        user: { login: "new-member", html_url: "https://github.com/new-member" },
+      },
+      organization: { login: "someorg" },
+    }, "member_added");
+    expect(text).toContain("new-member");
+    expect(text).toContain("https://github.com/new-member");
+    expect(text).not.toContain("alice");
+  });
+
+  it("names the invitee for member_invited, which has no membership object", () => {
+    // GitHub's member_invited payload has no `membership`; the invitee is in a
+    // top-level `user`, which also carries an html_url.
+    const text = cardText("organization", {
+      action: "member_invited",
+      invitation: { login: "hacktocat", email: null, inviter: { login: "inviter-user" } },
+      user: { login: "hacktocat", html_url: "https://github.com/hacktocat" },
+      organization: { login: "someorg" },
+    }, "member_invited");
+    expect(text).toContain("hacktocat");
+    expect(text).toContain("https://github.com/hacktocat");
+    expect(text).toContain("inviter-user"); // who sent the invitation
+    expect(text).not.toContain("alice");
+  });
+
+  it("does not print an email-only invitation's address", () => {
+    // A card is visible to the whole group; an email is not public information.
+    const text = cardText("organization", {
+      action: "member_invited",
+      invitation: { login: null, email: "someone@example.com", inviter: { login: "inviter-user" } },
+      organization: { login: "someorg" },
+    }, "member_invited");
+    expect(text).not.toContain("someone@example.com");
+    expect(text).toContain("invited by email");
+    expect(text).toContain("inviter-user");
+  });
+
+  it("names the collaborator for a `member` event", () => {
+    const text = cardText("member", {
+      action: "added",
+      member: { login: "new-collab", html_url: "https://github.com/new-collab" },
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+    }, "added");
+    expect(text).toContain("new-collab");
+    expect(text).not.toContain("alice");
+  });
+
+  it("names the teammate and the team for a `membership` event", () => {
+    const text = cardText("membership", {
+      action: "added",
+      scope: "team",
+      member: { login: "new-teammate" },
+      team: { name: "core-team", html_url: "https://github.com/orgs/someorg/teams/core-team" },
+      organization: { login: "someorg" },
+    }, "added");
+    expect(text).toContain("new-teammate");
+    expect(text).toContain("core-team");
+    expect(text).not.toContain("alice");
+  });
+
+  it("names the blocked user for `org_block`", () => {
+    const text = cardText("org_block", {
+      action: "blocked",
+      blocked_user: { login: "bad-actor", html_url: "https://github.com/bad-actor" },
+      organization: { login: "someorg" },
+    }, "blocked");
+    expect(text).toContain("bad-actor");
+    expect(text).not.toContain("alice");
+  });
+
+  it("says unknown — not the actor — when a person event names nobody", () => {
+    // A partial payload must not be reported as "the sender did it": that is
+    // how the card used to name the wrong person.
+    const text = cardText("member", {
+      action: "added",
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+    }, "added");
+    expect(text).toContain("unknown");
+    expect(text).not.toContain("alice");
+  });
+
+  it("still names the actor for events that are not about a person", () => {
+    // `create` is about a ref, not a person — the sender is the right name here.
+    const text = cardText("create", {
+      ref: "v1.0.0",
+      ref_type: "tag",
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+    });
+    expect(text).toContain("alice");
+    expect(text).not.toContain("unknown");
+  });
+
+  it("surfaces membership.state so a pending invitation is not read as joined", () => {
+    // GitHub's own member_added example carries state "pending". The login is
+    // deliberately unrelated to the word "pending" so this cannot pass by
+    // substring accident.
+    const text = cardText("organization", {
+      action: "member_added",
+      membership: { state: "pending", role: "member", user: { login: "invitee-login" } },
+      organization: { login: "someorg" },
+    }, "member_added");
+    expect(text).toContain("invitee-login");
+    expect(text).toContain("pending");
+  });
+
+  it("surfaces the previous permission without presenting it as current", () => {
+    // `member` action `edited` carries only changes.old_permission.from; the
+    // new permission is not in the payload.
+    const text = cardText("member", {
+      action: "edited",
+      member: { login: "octocat" },
+      changes: { old_permission: { from: "write" } },
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+    }, "edited");
+    expect(text).toContain("write");
+    expect(text).toContain("previously");
+  });
+
+  it("adds no membership lines for an event with no membership data", () => {
+    const text = cardText("create", { ref: "main", ref_type: "branch" });
+    expect(text).not.toContain("✉️");
+    expect(text).not.toContain("previously");
+  });
+});
+
+describe("buildCard · labels (#17)", () => {
+  it("states how many labels an issue card left out", () => {
+    const card = buildCard(msg("issues", {
+      action: "opened",
+      issue: { number: 1, title: "t", html_url: "u", user: { login: "c" }, labels: someLabels(10) },
+    }, { action: "opened" }));
+    const text = elementMarkdown(card.elements);
+    expect(text).toContain("label-0");
+    expect(text).not.toContain("label-3"); // only three pills are shown
+    expect(text).toContain("+7 more");
+  });
+
+  it("shows no remainder when every label fits", () => {
+    const card = buildCard(msg("issues", {
+      action: "opened",
+      issue: { number: 1, title: "t", html_url: "u", user: { login: "c" }, labels: someLabels(2) },
+    }, { action: "opened" }));
+    expect(elementMarkdown(card.elements)).not.toContain("more");
+  });
+
+  it("shows labels on a PR card, which showed none at all", () => {
+    const card = buildCard(msg("pull_request", {
+      action: "opened",
+      number: 1,
+      pull_request: { title: "t", html_url: "u", user: { login: "x" }, labels: someLabels(2) },
+    }, { action: "opened" }));
+    const text = elementMarkdown(card.elements);
+    expect(text).toContain("label-0");
+    expect(text).toContain("label-1");
+  });
+});
+
+describe("buildCard · fork button (#17)", () => {
+  it("opens the fork rather than the upstream repo", () => {
+    // The body reads "A → B(fork)", so the button must agree with it.
+    const card = buildCard(
+      msg("fork", { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } }),
+    );
+    const urls = findButtonUrls(card.elements);
+    expect(urls).toContain("https://github.com/eve/repo");
+    expect(urls).not.toContain("https://github.com/org/repo");
+  });
+
+  it("falls back to the upstream repo and says so when the payload has no forkee url", () => {
+    const card = buildCard(msg("fork", { forkee: { full_name: "eve/repo" } }));
+    expect(findButtonUrls(card.elements)).toEqual(["https://github.com/org/repo"]);
+    const button = card.elements.find((el) => (el as { tag?: string }).tag === "button");
+    expect((button as { text?: { content?: string } }).text?.content).toBe("View Repo");
   });
 });
