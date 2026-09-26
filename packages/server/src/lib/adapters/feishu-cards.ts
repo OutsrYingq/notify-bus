@@ -221,6 +221,13 @@ function columnSet(columns: CardElement[][]): CardElement {
 
 // ─── event-specific builders ───────────────────────────────────────────────
 
+/**
+ * GitHub truncates a push payload's `commits` array at this many entries ("The
+ * array includes a maximum of 2048 commits"), so a length equal to the cap may
+ * mean "exactly this many" or "longer and cut off".
+ */
+const MAX_PUSH_COMMITS = 2048;
+
 function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
@@ -237,6 +244,21 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
       url: asStr(co.url),
     };
   });
+
+  // The webhook push payload carries no total-count field: `total_commits` is
+  // not a GitHub field (it exists on other forges), and `size`/`distinct_size`
+  // appear only on the Events API. So the array length is the push size — but
+  // at the cap it cannot be told apart from a longer push that was truncated,
+  // so say "2048+" rather than assert a count we cannot know.
+  const totalLabel =
+    commits.length >= MAX_PUSH_COMMITS
+      ? `${MAX_PUSH_COMMITS}+ commits`
+      : `${commits.length} commit${commits.length === 1 ? "" : "s"}`;
+  // A history rewrite and a branch deletion are both pushes that must not read
+  // as an ordinary "N commits pushed". See #15.
+  const forced = p.forced === true;
+  const deleted = p.deleted === true;
+  const created = p.created === true;
 
   const head = asObj(p.head_commit);
   const added = asArr(head.added).length;
@@ -256,8 +278,14 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
       `📁 ${colored("green", `+${added}`)} ${colored("orange", `~${modified}`)} ${colored("red", `-${removed}`)}`,
     );
   }
-  rightParts.push(`📦 ${commits.length} commit${commits.length === 1 ? "" : "s"}`);
-  elements.push(columnSet([[leftCol], [markdown(rightParts.join("\n"))]]));
+  // A deleted branch has no commit count to report, so the author goes
+  // full-width rather than sharing the row with an empty or misleading column.
+  if (!deleted) rightParts.push(`📦 ${totalLabel}`);
+  if (rightParts.length > 0) {
+    elements.push(columnSet([[leftCol], [markdown(rightParts.join("\n"))]]));
+  } else {
+    elements.push(leftCol);
+  }
 
   elements.push(hr());
 
@@ -271,39 +299,105 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
       return `- ${headSha} ${md(firstLine(c.message))}${authorTag}`;
     });
     const overflow = commits.length - shown.length;
-    if (overflow > 0) lines.push(`_+${overflow} more commit${overflow === 1 ? "" : "s"}_`);
+    if (overflow > 0) {
+      // At GitHub's cap the payload itself may be truncated, so this line
+      // cannot claim an exact remainder — "+2043 more commits" would contradict
+      // the header's "2048+" and assert a total we cannot know (#15).
+      lines.push(
+        commits.length >= MAX_PUSH_COMMITS
+          ? `_+${overflow} more commits; the push may contain more_`
+          : `_+${overflow} more commit${overflow === 1 ? "" : "s"}_`,
+      );
+    }
     elements.push(markdown(lines.join("\n")));
   }
 
   if (body) elements.push(markdown(body));
 
-  if (compare) elements.push(linkButton("Compare changes", compare));
+  // A deleted branch's `after` sha is all zeros, so a compare link would lead
+  // nowhere.
+  if (compare && !deleted) elements.push(linkButton("Compare changes", compare));
+
+  const badges: HeaderBadge[] = [{ text: "push", color: "blue" }];
+  if (forced) badges.push({ text: "force push", color: "red" });
+  if (deleted) badges.push({ text: "branch deleted", color: "red" });
+  if (created) badges.push({ text: "new branch", color: "green" });
 
   return {
     header: {
-      title: `📦 ${commits.length} commit${commits.length === 1 ? "" : "s"} pushed`,
+      title: deleted ? "🌿 branch deleted" : `📦 ${totalLabel} pushed`,
       subtitle: branch ? `${repo} › ${branch}` : repo,
-      template: "blue",
-      badges: [{ text: "push", color: "blue" }],
+      // Red for a history rewrite: it is the one push kind that can destroy
+      // work, so it must not look like an ordinary push.
+      template: forced ? "red" : "blue",
+      badges,
     },
     elements,
   };
 }
 
-/** Map a PR/issue action to a colored badge. */
+/**
+ * Map a PR/issue action to a colored badge.
+ *
+ * The palette is governed by one rule: an action the reader may need to *act
+ * on* gets a colour of its own, and routine churn stays `neutral` so it can
+ * never be mistaken for a signal. (Tag colours are a small finite enum, so
+ * pairwise distinguishability across every action is not the goal — telling
+ * "needs attention" apart from "noise" is.)
+ */
 function actionBadge(action: string): HeaderBadge {
   const map: Record<string, TagColor> = {
+    // Activation / progress.
     opened: "turquoise",
     reopened: "green",
-    closed: "red",
-    merged: "violet",
-    synchronize: "neutral",
+    created: "wathet",
     ready_for_review: "blue",
     published: "turquoise",
+    released: "turquoise",
     prereleased: "yellow",
-    created: "wathet",
+    // Terminal or destructive.
+    closed: "red",
+    deleted: "red",
+    unpublished: "red",
+    merged: "violet",
+    // Needs the reader to act.
+    review_requested: "orange",
+    assigned: "indigo",
+    converted_to_draft: "yellow",
+    transferred: "carmine",
+    renamed: "purple",
+    publicized: "red",
+    // Routine churn — deliberately neutral.
+    synchronize: "neutral",
+    labeled: "neutral",
+    unlabeled: "neutral",
+    unassigned: "neutral",
+    review_request_removed: "neutral",
+    milestoned: "neutral",
+    demilestoned: "neutral",
+    edited: "neutral",
+    updated: "neutral",
+    locked: "neutral",
+    unlocked: "neutral",
+    pinned: "neutral",
+    unpinned: "neutral",
+    auto_merge_enabled: "neutral",
+    auto_merge_disabled: "neutral",
   };
   return { text: action, color: map[action] ?? "neutral" };
+}
+
+/**
+ * Header colour for a pull request.
+ *
+ * Merged and closed-without-merging must not look like an open PR (#15). The
+ * issues card already varies its header by action; these two builders should
+ * agree on that.
+ */
+function prHeaderColor(action: string, merged: boolean): CardColor {
+  if (merged) return "violet";
+  if (action === "closed") return "grey";
+  return "purple";
 }
 
 function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
@@ -354,7 +448,7 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
     header: {
       title: `🔀 PR #${number ?? "?"}`,
       subtitle: repo,
-      template: merged ? "violet" : "purple",
+      template: prHeaderColor(action, merged),
       badges,
     },
     elements,
@@ -567,7 +661,10 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
       title: `📋 ${message.event}`,
       subtitle: repo,
       template: "grey",
-      badges: message.action ? [{ text: message.action, color: "neutral" }] : undefined,
+      // Route the fallback's badge through the same palette every other card
+      // uses, so an action like `publicized` or `transferred` is not flattened
+      // to neutral just because this event lacks a dedicated builder (#15).
+      badges: message.action ? [actionBadge(message.action)] : undefined,
     },
     elements,
   };
