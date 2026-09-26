@@ -198,9 +198,16 @@ type EventSubject =
 
 function resolveEventSubject(
   event: string,
+  action: string | undefined,
   payload: Record<string, unknown>,
 ): EventSubject {
   if (event === "organization") {
+    // `organization` covers two unrelated shapes, so the action has to decide
+    // what an unresolvable person means. The member-* actions are about another
+    // person; `renamed` / `deleted` are about the organization itself, and
+    // naming the actor there is correct — reporting `unknown` would drop the
+    // one piece of information the payload does carry.
+    const memberAction = action !== undefined && action.startsWith("member_");
     // member_added / member_removed carry `membership`. member_invited has no
     // `membership` at all; it puts the invitee in a top-level `user`, which —
     // unlike `invitation` — also carries an html_url.
@@ -220,7 +227,10 @@ function resolveEventSubject(
     // without printing the address: a Feishu card is visible to everyone in the
     // group, and an email is not public information.
     if (asStr(invitation.email)) return { kind: "email-invite" };
-    return { kind: "unnamed" };
+    // A prefix test rather than a fixed list: an unrecognised `member_*` action
+    // then errs toward `unnamed`, which under-reports instead of naming the
+    // wrong person.
+    return memberAction ? { kind: "unnamed" } : { kind: "not-a-person-event" };
   }
 
   const field = SUBJECT_FIELD[event];
@@ -775,7 +785,7 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   // Who the event is about. Only an event that is *not* about a person may name
   // the actor — otherwise the card asserts something the payload never said
   // (#17).
-  const subject = resolveEventSubject(message.event, p);
+  const subject = resolveEventSubject(message.event, message.action, p);
   const details = resolveMembershipDetails(p);
   if (subject.kind === "login") {
     const who = subject.htmlUrl
