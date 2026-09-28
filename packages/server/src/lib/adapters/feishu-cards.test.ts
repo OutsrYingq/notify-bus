@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { buildCard } from "./feishu-cards";
 import { renderFormatted } from "../render";
-import { findTemplate, loadSeedConfig } from "../config";
+import { findTemplate, loadSeedConfig, resolveRoute } from "../config";
 import type { EventMessage } from "../../types";
 
 /** Minimal EventMessage with a raw GitHub-shaped payload + optional formatted body. */
@@ -48,21 +48,25 @@ function someLabels(n: number): { name: string }[] {
 }
 
 /**
- * Every button with its raw destination, recursing into column_set columns.
+ * Every button with its raw destination and style, recursing into column_set
+ * columns.
  *
  * A button whose `default_url` is empty is kept (`url: ""`) rather than
  * dropped: a dead button opens nothing when clicked, so a helper that filtered
  * empty targets out could not tell it apart from no button at all.
  */
-function findRawButtons(elements: unknown[]): { label: string; url: string }[] {
-  const buttons: { label: string; url: string }[] = [];
+function findRawButtons(
+  elements: unknown[],
+): { label: string; url: string; type: string }[] {
+  const buttons: { label: string; url: string; type: string }[] = [];
   for (const el of elements) {
     const tag = (el as { tag?: string }).tag;
     if (tag === "button") {
       const label = (el as { text?: { content?: string } }).text?.content ?? "";
+      const type = (el as { type?: string }).type ?? "";
       const behaviors = (el as { behaviors?: { default_url?: string }[] }).behaviors ?? [];
-      if (behaviors.length === 0) buttons.push({ label, url: "" });
-      for (const b of behaviors) buttons.push({ label, url: b.default_url ?? "" });
+      if (behaviors.length === 0) buttons.push({ label, url: "", type });
+      for (const b of behaviors) buttons.push({ label, url: b.default_url ?? "", type });
     }
     if (tag === "column_set") {
       for (const col of (el as { columns?: { elements?: unknown[] }[] }).columns ?? []) {
@@ -75,7 +79,9 @@ function findRawButtons(elements: unknown[]): { label: string; url: string }[] {
 
 /** Buttons that actually open something. */
 function findButtons(elements: unknown[]): { label: string; url: string }[] {
-  return findRawButtons(elements).filter((button) => button.url.length > 0);
+  return findRawButtons(elements)
+    .filter((button) => button.url.length > 0)
+    .map(({ label, url }) => ({ label, url }));
 }
 
 /** Recursively collect button open_url destinations from elements + columns. */
@@ -1123,23 +1129,27 @@ describe("buildCard · navigation buttons (#26)", () => {
   ): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
 
   /**
-   * One GitHub-shaped fixture per builder, with a distinct URL for every target
-   * a card can offer. A button that quietly opens the wrong one of them then
-   * shows up as a label/URL mismatch rather than a coincidence.
+   * One GitHub-shaped fixture per builder, keyed by event so a test names the
+   * card it means rather than an array position that shifts when one is added.
+   *
+   * Every target a card can offer gets its own URL, so a button that quietly
+   * opens the wrong one shows up as a label/URL mismatch rather than a
+   * coincidence.
    */
   const REPO_URL = "https://github.com/org/repo";
-  const FIXTURES: [event: string, payload: Record<string, unknown>, action?: string][] = [
-    [
-      "push",
-      {
+  const FIXTURES: Record<
+    string,
+    { payload: Record<string, unknown>; action?: string }
+  > = {
+    push: {
+      payload: {
         ref: "refs/heads/main",
         compare: "https://github.com/org/repo/compare/aaa...bbb",
         commits: [{ id: "abc1234567", message: "one" }],
       },
-    ],
-    [
-      "pull_request",
-      {
+    },
+    pull_request: {
+      payload: {
         action: "opened",
         number: 7,
         pull_request: {
@@ -1148,11 +1158,10 @@ describe("buildCard · navigation buttons (#26)", () => {
           user: { login: "bob" },
         },
       },
-      "opened",
-    ],
-    [
-      "issues",
-      {
+      action: "opened",
+    },
+    issues: {
+      payload: {
         action: "opened",
         issue: {
           number: 8,
@@ -1161,11 +1170,10 @@ describe("buildCard · navigation buttons (#26)", () => {
           user: { login: "carol" },
         },
       },
-      "opened",
-    ],
-    [
-      "release",
-      {
+      action: "opened",
+    },
+    release: {
+      payload: {
         action: "published",
         release: {
           name: "v1.0.0",
@@ -1174,16 +1182,47 @@ describe("buildCard · navigation buttons (#26)", () => {
           author: { login: "dave" },
         },
       },
-      "published",
-    ],
-    ["star", { action: "created" }, "created"],
-    ["fork", { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } }],
-    ["deployment", { deployment: { id: 1 }, repository: { full_name: "org/repo", html_url: REPO_URL } }],
-  ];
+      action: "published",
+    },
+    star: { payload: { action: "created" }, action: "created" },
+    fork: {
+      payload: { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } },
+    },
+    deployment: {
+      payload: {
+        deployment: { id: 1 },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+    },
+  };
+
+  /** Label + style of each button a card renders, for the weight assertions. */
+  const stylesOf = (
+    event: string,
+    payload: Record<string, unknown>,
+    action?: string,
+  ): string[] =>
+    findRawButtons(prodCard(event, payload, action).elements).map(
+      (button) => `${button.label}:${button.type}`,
+    );
+
+  /** Buttons of the canonical fixture for `event`, in render order. */
+  const fixtureButtons = (event: string): { label: string; url: string }[] => {
+    const fixture = FIXTURES[event];
+    if (!fixture) throw new Error(`no fixture for ${event}`);
+    return buttonsOf(event, fixture.payload, fixture.action);
+  };
+
+  /** Button labels + styles of the canonical fixture for `event`. */
+  const fixtureStyles = (event: string): string[] => {
+    const fixture = FIXTURES[event];
+    if (!fixture) throw new Error(`no fixture for ${event}`);
+    return stylesOf(event, fixture.payload, fixture.action);
+  };
 
   it("keeps every card within three buttons, each with a unique non-empty target", () => {
-    for (const [event, payload, action] of FIXTURES) {
-      const card = prodCard(event, payload, action);
+    for (const [event, fixture] of Object.entries(FIXTURES)) {
+      const card = prodCard(event, fixture.payload, fixture.action);
       const raw = findRawButtons(card.elements);
       const buttons = findButtons(card.elements);
       expect([event, buttons.length <= 3]).toEqual([event, true]);
@@ -1198,10 +1237,28 @@ describe("buildCard · navigation buttons (#26)", () => {
     }
   });
 
+  it("renders the repository as secondary navigation, never primary", () => {
+    // The card's own object is the primary action; the repository button is
+    // secondary, matching the `star` and fallback cards that compose their own
+    // `default` repo button. A card left with only "View Repo" — its object URL
+    // missing — used to render that button `primary` (#26 review).
+    expect(fixtureStyles("issues")).toEqual(["View Issue:primary", "View Repo:default"]);
+    expect(fixtureStyles("push")).toEqual(["Compare changes:primary", "View Repo:default"]);
+    expect(fixtureStyles("star")).toEqual(["View Repo:default"]);
+    expect(fixtureStyles("deployment")).toEqual(["View Repo:default"]);
+    // Still secondary when it is the only button left.
+    expect(
+      stylesOf("issues", { action: "opened", issue: { number: 8, title: "Bug" } }, "opened"),
+    ).toEqual(["View Repo:default"]);
+    expect(
+      stylesOf("push", { ref: "refs/heads/old", deleted: true, commits: [], head_commit: null }),
+    ).toEqual(["View Repo:default"]);
+  });
+
   it("push adds the repository button next to the compare link", () => {
     // The commit list links to individual commits, so before #26 nothing on this
     // card reached the repository: the only mention was the plain-text subtitle.
-    expect(buttonsOf("push", FIXTURES[0]![1])).toEqual([
+    expect(fixtureButtons("push")).toEqual([
       { label: "Compare changes", url: "https://github.com/org/repo/compare/aaa...bbb" },
       { label: "View Repo", url: REPO_URL },
     ]);
@@ -1219,7 +1276,7 @@ describe("buildCard · navigation buttons (#26)", () => {
   });
 
   it("pull_request points View PR, View files and View Repo at three distinct targets", () => {
-    expect(buttonsOf("pull_request", FIXTURES[1]![1], "opened")).toEqual([
+    expect(fixtureButtons("pull_request")).toEqual([
       { label: "View PR", url: "https://github.com/org/repo/pull/7" },
       { label: "View files", url: "https://github.com/org/repo/pull/7/files" },
       { label: "View Repo", url: REPO_URL },
@@ -1227,14 +1284,14 @@ describe("buildCard · navigation buttons (#26)", () => {
   });
 
   it("issues points View Issue and View Repo at two distinct targets", () => {
-    expect(buttonsOf("issues", FIXTURES[2]![1], "opened")).toEqual([
+    expect(fixtureButtons("issues")).toEqual([
       { label: "View Issue", url: "https://github.com/org/repo/issues/8" },
       { label: "View Repo", url: REPO_URL },
     ]);
   });
 
   it("release points View Release and View Repo at two distinct targets", () => {
-    expect(buttonsOf("release", FIXTURES[3]![1], "published")).toEqual([
+    expect(fixtureButtons("release")).toEqual([
       { label: "View Release", url: "https://github.com/org/repo/releases/tag/v1.0.0" },
       { label: "View Repo", url: REPO_URL },
     ]);
@@ -1311,7 +1368,11 @@ describe("buildCard · navigation buttons (#26)", () => {
       "opened",
     );
     expect(findRawButtons(buildCard(withIssueUrl).elements)).toEqual([
-      { label: "View Issue", url: "https://github.com/org/repo/issues/8" },
+      {
+        label: "View Issue",
+        url: "https://github.com/org/repo/issues/8",
+        type: "primary",
+      },
     ]);
   });
 
@@ -1386,13 +1447,24 @@ describe("buildCard · navigation buttons (#26)", () => {
     }
   });
 
-  it("keeps the shipped route whitelist off the comment events", () => {
+  it("does not deliver either comment event under the shipped config", () => {
+    // Asserted through the router rather than by reading the `match_event`
+    // strings: a route that omits `match_event` matches every event, so a
+    // catch-all route added to config.example.yaml later would deliver these
+    // while a whitelist-string check still passed. (#26 review)
     const config = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
     if (!config) throw new Error("config.example.yaml did not load");
-    const matched = (config.routes ?? []).flatMap((route) =>
-      route.match_event ? route.match_event.split(",").map((e) => e.trim()) : [],
-    );
-    expect(matched).not.toContain("pull_request_review_comment");
-    expect(matched).not.toContain("commit_comment");
+    for (const event of ["pull_request_review_comment", "commit_comment"]) {
+      const message = msg(
+        event,
+        {
+          action: "created",
+          comment: { html_url: "https://github.com/org/repo/issues/1#issuecomment-2", body: "hi" },
+          repository: { full_name: "org/repo", html_url: REPO_URL },
+        },
+        { action: "created" },
+      );
+      expect([event, resolveRoute(config, message).kind]).toEqual([event, "no_route"]);
+    }
   });
 });

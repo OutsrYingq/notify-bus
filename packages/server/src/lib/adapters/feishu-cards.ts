@@ -366,13 +366,19 @@ function columnSet(columns: CardElement[][]): CardElement {
 
 // ─── card navigation ───────────────────────────────────────────────────────
 
-/** A navigation target: the label to render and the URL it opens, if any. */
+/** A navigation target: the label to render, the URL it opens, and its style. */
 interface NavTarget {
   label: string;
   /** Absent when the payload carries no URL for this target. */
   url?: string;
-  /** `primary` marks the card's own object; every other target renders `default`. */
-  type?: "primary" | "default";
+  /**
+   * `primary` marks the card's own object. The repository is *secondary*
+   * navigation, so it always renders `default`. Spelled out at every call site
+   * rather than defaulted, so no target's style is left implicit — the single
+   * button left behind by a missing object URL used to come out `primary`,
+   * disagreeing with the `star` and fallback cards' own repo buttons.
+   */
+  type: "primary" | "default";
 }
 
 /**
@@ -390,7 +396,8 @@ interface NavTarget {
  * Cards that already navigate to the repository compose their own single button
  * instead of calling this, so no second repo link is added to them.
  *
- * One button renders bare, several share an equally-weighted row.
+ * One button renders bare, several share an equally-weighted row. The card's own
+ * object is `primary`; the repository added here is always `default`.
  */
 function navigationButtons(
   targets: readonly NavTarget[],
@@ -400,17 +407,17 @@ function navigationButtons(
     (target): target is NavTarget & { url: string } => Boolean(target.url),
   );
   if (repoUrl && !buttons.some((button) => button.url === repoUrl)) {
-    buttons.push({ label: "View Repo", url: repoUrl });
+    buttons.push({ label: "View Repo", url: repoUrl, type: "default" });
   }
   if (buttons.length === 0) return [];
   if (buttons.length === 1) {
     const only = buttons[0]!;
-    return [linkButton(only.label, only.url, only.type ?? "primary")];
+    return [linkButton(only.label, only.url, only.type)];
   }
   return [
     columnSet(
       buttons.map((button) => [
-        linkButton(button.label, button.url, button.type ?? "default"),
+        linkButton(button.label, button.url, button.type),
       ]),
     ),
   ];
@@ -655,7 +662,7 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
       [
         { label: "View PR", url: prUrl, type: "primary" },
         // `/files` only means anything appended to a real PR url.
-        { label: "View files", url: prUrl ? `${prUrl}/files` : undefined },
+        { label: "View files", url: prUrl ? `${prUrl}/files` : undefined, type: "default" },
       ],
       repoUrl,
     ),
