@@ -404,14 +404,14 @@ describe("buildCard · action badge palette (#15)", () => {
   it("applies the palette on the fallback card, not only the dedicated builders", () => {
     // Events without a dedicated builder go through buildFallbackCard, which
     // used to hardcode a neutral badge — silently disabling the palette for the
-    // ~30 event types that have no builder of their own. The `repository`
-    // rows above cover this too; this test exists so the coverage is explicit
-    // and cannot be lost by editing that table.
-    const card = buildCard(msg("repository", { action: "transferred" }, { action: "transferred" }));
+    // ~30 event types that have no builder of their own. `label` is one of
+    // those; its `deleted` action is in the palette, so the palette has to
+    // reach the fallback.
+    const card = buildCard(msg("label", { action: "deleted" }, { action: "deleted" }));
     // header `grey` is buildFallbackCard's signature — assert it so this test
     // cannot silently start exercising a different builder.
     expect(card.header.template).toBe("grey");
-    expect(card.header.badges).toContainEqual({ text: "transferred", color: "carmine" });
+    expect(card.header.badges).toContainEqual({ text: "deleted", color: "red" });
   });
 
   it("gives an action the reader may need to act on a colour of its own", () => {
@@ -594,6 +594,241 @@ describe("buildCard · star / fork", () => {
   });
 });
 
+describe("buildCard · issue_comment (#21)", () => {
+  const COMMENT_URL = "https://github.com/org/repo/issues/42#issuecomment-1";
+  const ISSUE_URL = "https://github.com/org/repo/issues/42";
+
+  /**
+   * A GitHub-shaped `issue_comment` payload: the comment, its parent issue, and
+   * the repository. `overrides.comment` / `overrides.issue` are merged one
+   * level deep so a test can drop or replace a single field.
+   */
+  const fixture = (
+    action: string,
+    overrides: {
+      comment?: Record<string, unknown>;
+      issue?: Record<string, unknown>;
+    } = {},
+  ): Record<string, unknown> => ({
+    action,
+    issue: {
+      number: 42,
+      title: "Login broken",
+      html_url: ISSUE_URL,
+      user: { login: "carol" },
+      ...overrides.issue,
+    },
+    comment: {
+      body: "I can reproduce on Safari",
+      html_url: COMMENT_URL,
+      user: { login: "carol", html_url: "https://github.com/carol" },
+      ...overrides.comment,
+    },
+    repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+  });
+
+  it("shows the comment, its author and the parent issue", () => {
+    const card = prodCard("issue_comment", fixture("created"), "created");
+    const text = elementMarkdown(card.elements);
+    expect(text).toContain("Login broken");
+    expect(text).toContain("> I can reproduce on Safari");
+    expect(text).toContain("carol");
+    // The issue is identified in the header, so the body carries its title only.
+    expect(card.header.title).toContain("#42");
+  });
+
+  it("sends View Comment to the comment itself", () => {
+    const card = prodCard("issue_comment", fixture("created"), "created");
+    expect(findButtons(card.elements)).toEqual([
+      { label: "View Comment", url: COMMENT_URL },
+      { label: "View Repo", url: "https://github.com/org/repo" },
+    ]);
+  });
+
+  it("falls back to the parent issue when the comment carries no url", () => {
+    const card = prodCard(
+      "issue_comment",
+      fixture("created", { comment: { html_url: undefined } }),
+      "created",
+    );
+    // The label has to follow the target (#26): this button opens the issue.
+    expect(findButtons(card.elements)).toEqual([
+      { label: "View Issue", url: ISSUE_URL },
+      { label: "View Repo", url: "https://github.com/org/repo" },
+    ]);
+  });
+
+  it("emits no button when neither the comment nor its parent has a url", () => {
+    const noUrls = msgWithoutRepoUrl(
+      "issue_comment",
+      fixture("created", { comment: { html_url: undefined }, issue: { html_url: undefined } }),
+      "created",
+    );
+    // Raw buttons, so a button with an empty target cannot pass as "no button".
+    expect(findRawButtons(buildCard(noUrls).elements)).toEqual([]);
+  });
+
+  it("distinguishes created, edited and deleted", () => {
+    const look = (action: string) => {
+      const card = prodCard("issue_comment", fixture(action), action);
+      return `${card.header.template}/${card.header.badges?.[0]?.color}`;
+    };
+    expect(look("created")).toBe("blue/wathet");
+    expect(look("edited")).toBe("grey/neutral");
+    expect(look("deleted")).toBe("red/red");
+  });
+
+  it("names the comment's author rather than the actor", () => {
+    // The fixture's actor is `alice` (see msg()) and the comment's author is
+    // carol. The fallback rendered `message.actor`, which on `edited` is the
+    // editor — the bug this card exists to fix.
+    const text = cardText("issue_comment", fixture("edited"), "edited");
+    expect(text).toContain("carol");
+  });
+
+  it("adds the editor beside the author when somebody else edits the comment", () => {
+    const text = cardText("issue_comment", fixture("edited"), "edited");
+    expect(text).toContain("carol"); // still the author
+    expect(text).toContain("alice"); // the editor, on its own line
+    expect(text).toContain("edited by");
+  });
+
+  it("does not announce an edit when the author edits their own comment", () => {
+    const text = cardText(
+      "issue_comment",
+      fixture("edited", { comment: { user: { login: "alice" } } }),
+      "edited",
+    );
+    expect(text).toContain("alice");
+    expect(text).not.toContain("edited by");
+  });
+
+  it("says unknown — not the actor — when the payload names no author", () => {
+    const text = cardText("issue_comment", fixture("created", { comment: { user: null } }), "created");
+    expect(text).toContain("unknown");
+    expect(text).not.toContain("alice");
+  });
+
+  it("keeps its own content when a template is configured", () => {
+    const message = msg("issue_comment", fixture("created"), { action: "created" });
+    const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
+    expect(text).toContain("Login broken");
+    expect(text).toContain("I can reproduce on Safari");
+    expect(text).toContain("Deploying now");
+  });
+});
+
+describe("buildCard · repository (#21)", () => {
+  const REPO_URL = "https://github.com/org/repo";
+
+  /** A GitHub-shaped `repository` payload; `extra` adds to the repository object. */
+  const fixture = (
+    action: string,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    action,
+    repository: {
+      name: "repo",
+      full_name: "org/repo",
+      html_url: REPO_URL,
+      ...extra,
+    },
+    organization: { login: "org" },
+  });
+
+  it("is the quiet grey baseline for an ordinary edit", () => {
+    const card = prodCard("repository", fixture("edited"), "edited");
+    expect(card.header.template).toBe("grey");
+    expect(card.header.badges).toEqual([{ text: "edited", color: "neutral" }]);
+  });
+
+  it("makes deleted and archived visibly different from an ordinary edit", () => {
+    const template = (action: string) =>
+      prodCard("repository", fixture(action), action).header.template;
+    expect(template("deleted")).toBe("red");
+    expect(template("archived")).toBe("yellow");
+    expect(template("archived")).not.toBe(template("edited"));
+    expect(template("deleted")).not.toBe(template("edited"));
+  });
+
+  it("shows the previous name on a rename, and no line at all without one", () => {
+    const renamed = prodCard("repository", {
+      ...fixture("renamed"),
+      changes: { repository: { name: { from: "old-name" } } },
+    }, "renamed");
+    expect(elementMarkdown(renamed.elements)).toContain("old-name");
+
+    // A payload without the `changes` path degrades to no line (#21) — never to
+    // "formerly undefined".
+    const partial = prodCard("repository", fixture("renamed"), "renamed");
+    expect(elementMarkdown(partial.elements)).not.toContain("undefined");
+  });
+
+  it("shows the previous owner on a transfer, and no line at all without one", () => {
+    const transferred = prodCard("repository", {
+      ...fixture("transferred"),
+      changes: { owner: { from: { user: { login: "old-owner" } } } },
+    }, "transferred");
+    expect(elementMarkdown(transferred.elements)).toContain("old-owner");
+
+    const partial = prodCard("repository", fixture("transferred"), "transferred");
+    expect(elementMarkdown(partial.elements)).not.toContain("undefined");
+  });
+
+  it("reads visibility from repository.private, never from repository.visibility", () => {
+    // GitHub sends BOTH fields on a `privatized` payload, and `visibility` can
+    // still hold the previous value — the fixtures make them disagree, so only
+    // `private` can produce the right answer (#21).
+    const privatized = prodCard(
+      "repository",
+      fixture("privatized", { private: true, visibility: "public" }),
+      "privatized",
+    );
+    expect(elementMarkdown(privatized.elements)).toContain("private");
+    expect(elementMarkdown(privatized.elements)).not.toContain("public");
+
+    // The complement, so a card that simply echoed `private` verbatim could not
+    // pass both: `visibility` says private while `private` says otherwise.
+    const publicized = prodCard(
+      "repository",
+      fixture("publicized", { private: false, visibility: "private" }),
+      "publicized",
+    );
+    expect(elementMarkdown(publicized.elements)).toContain("public");
+    expect(elementMarkdown(publicized.elements)).not.toContain("private");
+  });
+
+  it("links the repository as its single default button", () => {
+    const card = prodCard("repository", fixture("renamed"), "renamed");
+    expect(findRawButtons(card.elements)).toEqual([
+      { label: "View Repo", url: REPO_URL, type: "default" },
+    ]);
+  });
+
+  it("emits no button when the repository has no url", () => {
+    const noUrl = msgWithoutRepoUrl("repository", fixture("deleted"), "deleted");
+    expect(findRawButtons(buildCard(noUrl).elements)).toEqual([]);
+  });
+
+  it("names the sender, since a repository event is not about a person", () => {
+    const text = cardText("repository", fixture("edited"), "edited");
+    expect(text).toContain("alice");
+    expect(text).not.toContain("unknown");
+  });
+
+  it("appends a configured template beside the change it describes", () => {
+    const message = msg("repository", {
+      ...fixture("renamed"),
+      changes: { repository: { name: { from: "old-name" } } },
+    }, { action: "renamed" });
+    const text = elementMarkdown(
+      buildCard(renderFormatted(message, "Please update your remotes")).elements,
+    );
+    expect(text).toContain("old-name");
+    expect(text).toContain("Please update your remotes");
+  });
+});
+
 describe("buildCard · fallback", () => {
   it("renders a grey card for an unknown event with an action badge", () => {
     const card = buildCard(msg("deployment", { environment: "prod" }));
@@ -639,8 +874,10 @@ describe("buildCard · fallback", () => {
   it("labels View Repo (not View Org) for a repo event whose repo belongs to an org (#13)", () => {
     // GitHub repo-scoped payloads include BOTH repository AND organization
     // when the repo is org-owned. Must not be misdetected as an org event.
-    const card = buildCard(msg("issue_comment", {
+    // (`label` has no dedicated builder, so this stays a fallback assertion.)
+    const card = buildCard(msg("label", {
       action: "created",
+      label: { name: "bug" },
       repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
       organization: { login: "org" },
     }, { action: "created" }));
@@ -650,22 +887,6 @@ describe("buildCard · fallback", () => {
       const content = (b as { text?: { content?: string } }).text?.content ?? "";
       expect(content).not.toBe("View Org");
     }
-  });
-
-  it("surfaces comment body + issue title/number for issue_comment (#13)", () => {
-    const card = buildCard(msg("issue_comment", {
-      action: "created",
-      issue: { number: 42, title: "Login broken", html_url: "https://github.com/org/repo/issues/42" },
-      comment: { body: "I can reproduce on Safari", html_url: "https://github.com/org/repo/issues/42#issuecomment-1" },
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    }, { action: "created" }));
-    const text = elementMarkdown(card.elements);
-    expect(text).toContain("Login broken");
-    expect(text).toContain("#42");
-    expect(text).toContain("I can reproduce on Safari");
-    // Button links to the comment and is labeled "View Comment".
-    const urls = findButtonUrls(card.elements);
-    expect(urls).toContain("https://github.com/org/repo/issues/42#issuecomment-1");
   });
 
   it("labels View Org only for true org-scoped events (no repository in payload)", () => {
@@ -813,9 +1034,11 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
     // populated formatted.body, and buildFallbackCard composes its body with
     // `body || lines` — so a non-empty default replaced, and therefore
     // discarded, everything #12/#13/#14 added to the fallback card.
-    const message = msg("issue_comment", {
+    // `discussion_comment` is used here because it is still a fallback event
+    // (`issue_comment` now has a builder of its own, #21).
+    const message = msg("discussion_comment", {
       action: "created",
-      issue: { number: 42, title: "Login broken", html_url: "u" },
+      discussion: { title: "Login broken" },
       comment: { body: "I can reproduce on Safari", html_url: "u#1" },
     }, { action: "created" });
     const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
@@ -837,11 +1060,11 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
   it("keeps the fallback card's own content when a template IS configured", () => {
     // The fallback composed its body with `body || lines`, so a configured
     // template replaced — and therefore discarded — the comment text, parent
-    // issue title and membership details. Configuring a template must not make
-    // the card less informative than leaving it unset.
-    const message = msg("issue_comment", {
+    // discussion title and membership details. Configuring a template must not
+    // make the card less informative than leaving it unset.
+    const message = msg("discussion_comment", {
       action: "created",
-      issue: { number: 42, title: "Login broken", html_url: "u" },
+      discussion: { title: "Login broken" },
       comment: { body: "I can reproduce on Safari", html_url: "u#1" },
     }, { action: "created" });
     const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
@@ -1187,6 +1410,23 @@ describe("buildCard · navigation buttons (#26)", () => {
     star: { payload: { action: "created" }, action: "created" },
     fork: {
       payload: { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } },
+    },
+    issue_comment: {
+      payload: {
+        action: "created",
+        issue: { number: 8, title: "Bug", html_url: "https://github.com/org/repo/issues/8" },
+        comment: {
+          body: "me too",
+          html_url: "https://github.com/org/repo/issues/8#issuecomment-1",
+          user: { login: "carol" },
+        },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+      action: "created",
+    },
+    repository: {
+      payload: { action: "renamed", repository: { full_name: "org/repo", html_url: REPO_URL } },
+      action: "renamed",
     },
     deployment: {
       payload: {

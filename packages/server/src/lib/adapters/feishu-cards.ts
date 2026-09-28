@@ -276,6 +276,70 @@ function resolveMembershipDetails(
   };
 }
 
+/**
+ * The comment an `issue_comment` event is about, and where it can be read.
+ *
+ * `author` is deliberately not `message.actor`. The two agree on `created`, but
+ * on `edited` the actor is whoever made the edit — so reading the actor here is
+ * how the fallback card came to name the wrong person as the commenter (#21).
+ */
+interface IssueComment {
+  author?: string;
+  body?: string;
+  url?: string;
+}
+
+/** Read the `comment` object GitHub nests in an `issue_comment` payload. */
+function resolveIssueComment(payload: Record<string, unknown>): IssueComment {
+  const comment = asObj(payload.comment);
+  return {
+    author: asStr(asObj(comment.user).login),
+    body: asStr(comment.body),
+    url: asStr(comment.html_url),
+  };
+}
+
+/**
+ * What a `repository` event changed, as far as the payload states it.
+ *
+ * Every field is optional because each comes from a nested `changes` path that
+ * a partial payload may omit — the card then leaves the line out rather than
+ * render `undefined` (#21).
+ */
+interface RepositoryChange {
+  /** `renamed`: the name the repository had before. */
+  previousName?: string;
+  /** `transferred`: the login of the owner it came from. */
+  previousOwner?: string;
+  /**
+   * The repository's current visibility, read from `repository.private` **only**.
+   *
+   * The repository object also carries a `visibility` string, and reading it
+   * would be a bug: the action is what makes the claim ("this event made the
+   * repository private"), and `private` is the field that agrees with it —
+   * `visibility` is a coarser, separately-updated field that can still hold the
+   * old value in the very payload announcing the change (#21).
+   */
+  isPrivate?: boolean;
+}
+
+function resolveRepositoryChange(
+  payload: Record<string, unknown>,
+): RepositoryChange {
+  const changes = asObj(payload.changes);
+  const fromName = asStr(asObj(asObj(changes.repository).name).from);
+  // `changes.owner.from` holds a `user` for a transfer to a person and an
+  // `organization` for a transfer to an org; only the user shape names a login
+  // this card can print, so a missing one drops the line.
+  const previousOwner = asStr(asObj(asObj(asObj(changes.owner).from).user).login);
+  const isPrivate = asObj(payload.repository).private;
+  return {
+    previousName: fromName,
+    previousOwner,
+    isPrivate: typeof isPrivate === "boolean" ? isPrivate : undefined,
+  };
+}
+
 /** Colours cycled through for issue/PR label pills. */
 const LABEL_COLORS: TagColor[] = ["blue", "turquoise", "orange", "violet", "green"];
 
@@ -613,6 +677,56 @@ function prHeaderColor(action: string, merged: boolean): CardColor {
   return "purple";
 }
 
+/**
+ * Header colour for an `issue_comment` event.
+ *
+ * A comment has three actions and a reader has to tell them apart at a glance:
+ * `created` is content to read, `edited` is churn, `deleted` is destructive.
+ * The colours follow the module's weighting rule (see {@link actionBadge}) —
+ * blue for ordinary activity, grey for churn, red for destruction — so the
+ * header and the badge agree on how much attention the action deserves.
+ */
+function commentHeaderColor(action: string): CardColor {
+  if (action === "deleted") return "red";
+  if (action === "edited") return "grey";
+  return "blue";
+}
+
+/**
+ * Header colour for a `repository` event.
+ *
+ * This event spends most of its life on `edited`, so that is the quiet baseline
+ * and every other action has to be visibly different from it — which is why
+ * `archived` is not another grey (#21). The grouping is by what the reader has
+ * to do about it: react to an irreversible change, notice a state change, or
+ * nothing at all.
+ */
+function repositoryHeaderColor(action: string): CardColor {
+  switch (action) {
+    // Irreversible: the repository is gone, or its code is public for good.
+    case "deleted":
+    case "publicized":
+      return "red";
+    // Frozen read-only, or visible to fewer people than before — a state worth
+    // noticing, but nothing was lost.
+    case "archived":
+    case "privatized":
+      return "yellow";
+    // Newly created, or writable again.
+    case "created":
+    case "unarchived":
+      return "green";
+    // The repository's identity changed.
+    case "renamed":
+      return "purple";
+    case "transferred":
+      return "carmine";
+    // `edited` — the ordinary case — and any action GitHub adds later.
+    default:
+      return "grey";
+  }
+}
+
 function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
@@ -834,6 +948,132 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
   };
 }
 
+/**
+ * `issue_comment` — a comment on an issue or a pull request.
+ *
+ * The card is about the comment, not about the issue it hangs off, and about
+ * the person who wrote it, not about whoever the event is attributed to. The
+ * fallback rendered this event from `message.actor`, which names the editor
+ * rather than the author on `edited` — the reason this builder exists (#21).
+ */
+function buildIssueCommentCard(message: EventMessage, body: string): FeishuCard {
+  const p = message.payload;
+  const repo = message.repository.full_name;
+  const repoUrl = message.repository.html_url;
+  const action = message.action ?? asStr(p.action) ?? "created";
+  const issue = asObj(p.issue);
+  const issueTitle = asStr(issue.title);
+  const issueUrl = asStr(issue.html_url);
+  const number = asNum(issue.number);
+  const comment = resolveIssueComment(p);
+
+  const elements: CardElement[] = [];
+
+  // The comment is what happened; the issue it hangs off is the context that
+  // makes it readable, so the title goes above the quoted text.
+  const content: CardElement[] = [];
+  if (issueTitle) content.push(markdown(`### ${md(issueTitle)}`));
+  const commentBody = truncate(comment.body, 300);
+  if (commentBody) {
+    content.push(markdown(`> ${md(commentBody).replace(/\n/g, "\n> ")}`));
+  }
+  if (body) content.push(markdown(body));
+  if (content.length > 0) elements.push(...content, hr());
+
+  // Who wrote the comment — resolved from `comment.user`, never the actor,
+  // because on `edited` the actor is the editor (#21). A payload that names
+  // nobody says "unknown" rather than borrowing the sender's name, the rule the
+  // subject resolution above follows too.
+  const authorLines = [comment.author ? `👤 **${md(comment.author)}**` : "👤 unknown"];
+  // The editor is an extra fact, so it is added beside the author and only when
+  // it is somebody else — "edited by carol" under carol's own comment is noise.
+  const editor = action === "edited" ? message.actor.login : undefined;
+  if (editor && editor !== comment.author) {
+    authorLines.push(`✏️ edited by **${md(editor)}**`);
+  }
+  elements.push(markdown(authorLines.join("\n")));
+
+  // The comment itself when the payload says where it is, the parent issue
+  // otherwise. The label follows the target (#26), so the fallback does not
+  // claim to open a comment it cannot address.
+  const primary: NavTarget = comment.url
+    ? { label: "View Comment", url: comment.url, type: "primary" }
+    : { label: "View Issue", url: issueUrl, type: "primary" };
+  elements.push(...navigationButtons([primary], repoUrl));
+
+  return {
+    header: {
+      title: `💬 Comment on #${number ?? "?"}`,
+      subtitle: repo,
+      template: commentHeaderColor(action),
+      badges: [actionBadge(action)],
+    },
+    elements,
+  };
+}
+
+/**
+ * `repository` — the repository itself changed: renamed, transferred, its
+ * visibility flipped, archived or deleted.
+ *
+ * Every line the card prints about the change is conditional on the payload
+ * actually carrying it. GitHub states a change in `changes`, and a partial
+ * payload (or an action whose `changes` shape differs) must degrade to a card
+ * with less detail, never to one that reads "formerly undefined" (#21).
+ */
+function buildRepositoryCard(message: EventMessage, body: string): FeishuCard {
+  const p = message.payload;
+  const repo = message.repository.full_name;
+  const repoUrl = message.repository.html_url;
+  const action = message.action ?? asStr(p.action) ?? "updated";
+  const change = resolveRepositoryChange(p);
+
+  const content: CardElement[] = [];
+  if (action === "renamed" && change.previousName) {
+    content.push(markdown(`✏️ formerly \`${md(change.previousName)}\``));
+  }
+  if (action === "transferred" && change.previousOwner) {
+    content.push(markdown(`➡️ from **${md(change.previousOwner)}**`));
+  }
+  if (
+    (action === "privatized" || action === "publicized") &&
+    change.isPrivate !== undefined
+  ) {
+    // The whole line exists so the reader can see which way the visibility
+    // went — see `resolveRepositoryChange` for why `private` decides it.
+    content.push(markdown(change.isPrivate ? "🔒 private" : "🌐 public"));
+  }
+  if (body) content.push(markdown(body));
+
+  const elements: CardElement[] = [];
+  if (content.length > 0) elements.push(...content, hr());
+  // A repository event is not about a person, so the sender is the right name
+  // here — the same rule the fallback card applies to non-person events.
+  elements.push(markdown(`👤 **${md(message.actor.login)}**`));
+  // The repository is this card's own object, yet every repository button in
+  // this module renders `default` (star, fork, the fallback, and the one
+  // `navigationButtons` adds), so this card's is `default` too rather than a
+  // lone exception. Passing it in as a target keeps the dead-button guard in
+  // one place; `navigationButtons` sees the url already present and adds no
+  // second button.
+  elements.push(
+    ...navigationButtons(
+      [{ label: "View Repo", url: repoUrl, type: "default" }],
+      repoUrl,
+    ),
+  );
+
+  return {
+    header: {
+      title: `📦 ${action}`,
+      subtitle: repo,
+      template: repositoryHeaderColor(action),
+      badges: [actionBadge(action)],
+    },
+    elements,
+  };
+}
+
 function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
@@ -956,6 +1196,10 @@ export function buildCard(message: EventMessage): FeishuCard {
       return buildStarCard(message, body);
     case "fork":
       return buildForkCard(message, body);
+    case "issue_comment":
+      return buildIssueCommentCard(message, body);
+    case "repository":
+      return buildRepositoryCard(message, body);
     default:
       return buildFallbackCard(message, body);
   }
