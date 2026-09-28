@@ -6,89 +6,40 @@
  * tiles, link buttons, dividers). The whole card is NOT clickable — links
  * live in explicit buttons and inline markdown links.
  *
- * v2 schema notes (verified against the Feishu docs):
- *   - Buttons link via `behaviors:[{type:"open_url", default_url}]`, not a
- *     top-level `url` (that's the deprecated v1 shorthand).
- *   - Buttons go directly in `elements`; the v1 `tag:"action"` wrapper is gone.
- *   - The v1 `note` element is gone — use a `div` with small grey text instead.
- *   - Inside markdown/lark_md: `<text_tag color="green">label</text_tag>`
- *     renders a colored pill; `<font color="green">+42</font>` colors text.
- *
  * This module owns *structure* (colors, layout, buttons). The body markdown
  * comes from `message.formatted?.body` — the configured template's rendered
  * output, or empty when no template is configured — and is folded in as extra
  * content.
+ *
+ * The builders left here are push, pull_request, issues, release, star, fork
+ * and the fallback. `issue_comment` and `repository` have modules of their own
+ * (`feishu-comment-card.ts` / `feishu-repository-card.ts`, #21), and the
+ * vocabulary all of them share — types, accessors, element constructors,
+ * `navigationButtons`, the action palette and the v2 schema notes — lives in
+ * `feishu-card-kit.ts`. `buildCard` at the bottom dispatches across all of them.
  */
 import type { EventMessage } from "../../types";
-
-/** Header color theme (Feishu enum). */
-export type CardColor =
-  | "blue"
-  | "wathet"
-  | "turquoise"
-  | "green"
-  | "yellow"
-  | "orange"
-  | "red"
-  | "carmine"
-  | "violet"
-  | "purple"
-  | "indigo"
-  | "grey";
-
-/** text_tag / font color (superset of header colors incl. `neutral`, `lime`). */
-export type TagColor =
-  | "neutral"
-  | "blue"
-  | "turquoise"
-  | "lime"
-  | "orange"
-  | "violet"
-  | "indigo"
-  | "wathet"
-  | "green"
-  | "yellow"
-  | "red"
-  | "purple"
-  | "carmine";
-
-/** A card body element — a permissive shape covering all the tags we emit. */
-export type CardElement = Record<string, unknown>;
-
-/** A header suffix badge (renders as a colored pill next to the title). */
-export interface HeaderBadge {
-  text: string;
-  color: TagColor;
-}
-
-/** The shape returned by buildCard: the parts of a Feishu card we control. */
-export interface FeishuCard {
-  header: {
-    title: string;
-    subtitle?: string;
-    template: CardColor;
-    badges?: HeaderBadge[];
-  };
-  elements: CardElement[];
-}
-
-// ─── payload accessors ─────────────────────────────────────────────────────
-
-function asObj(value: unknown): Record<string, unknown> {
-  return (value && typeof value === "object" ? value : {}) as Record<
-    string,
-    unknown
-  >;
-}
-function asStr(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-function asNum(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined;
-}
-function asArr(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
+import { buildIssueCommentCard } from "./feishu-comment-card";
+import {
+  actionBadge,
+  asArr,
+  asNum,
+  asObj,
+  asStr,
+  columnSet,
+  hr,
+  linkButton,
+  markdown,
+  md,
+  navigationButtons,
+  truncate,
+  type CardColor,
+  type CardElement,
+  type FeishuCard,
+  type HeaderBadge,
+  type TagColor,
+} from "./feishu-card-kit";
+import { buildRepositoryCard } from "./feishu-repository-card";
 
 // ─── text helpers ──────────────────────────────────────────────────────────
 
@@ -103,50 +54,9 @@ function extractBranch(ref: string | undefined): string | undefined {
   return ref.replace(/^refs\/(heads|tags)\//, "");
 }
 
-/** Truncate + ellipsis. Returns "" for empty/whitespace. */
-function truncate(text: string | undefined, max: number): string {
-  const clean = (text ?? "").replace(/\r/g, "").trim();
-  if (clean.length <= max) return clean;
-  return `${clean.slice(0, max).trimEnd()}…`;
-}
-
 /** First line of a commit message, truncated. */
 function firstLine(msg: string | undefined, max = 120): string {
   return truncate(msg, max)?.split("\n")[0] ?? "";
-}
-
-/**
- * Make a value from the GitHub payload safe to embed in card markdown.
- *
- * Everything user-controlled reaches the card through here: commit messages,
- * issue/PR titles and bodies, comments, branch names, labels, logins. Feishu's
- * card markdown recognises a set of HTML-like tags (`<at>`, `<font>`,
- * `<text_tag>`, `<a>`, ...), so without escaping a commit message could smuggle
- * one in and have it executed as card markup — forging styling, or (for
- * `<at id=all>`) making the entire card fail to send (#16).
- *
- * Feishu's documented escaping form is the *numeric* entity (`&#60;` for `<`,
- * `&#62;` for `>`), not the named `&lt;` / `&gt;` forms.
- *
- * Markup this module generates is concatenated *around* the escaped text (see
- * {@link textTag} and {@link colored}) and never passes through here, so
- * generated tags keep working while user-supplied ones are neutralised.
- *
- * Note: `>` is escaped too, which means a literal quote line inside a PR or
- * issue body renders as text rather than as a blockquote. That is deliberate —
- * user text should not control card layout, and the platform lists `&#62;` in
- * its escaping table.
- */
-function md(text: string | undefined): string {
-  return (
-    (text ?? "")
-      // `&` first, so the entities introduced below are not double-escaped.
-      .replace(/&/g, "&#38;")
-      .replace(/</g, "&#60;")
-      .replace(/>/g, "&#62;")
-      .replace(/\|/g, "\\|")
-      .trim()
-  );
 }
 
 /** A `<text_tag>` pill, for embedding inside markdown content. */
@@ -320,109 +230,6 @@ function resolvePrimaryLink(
   return { url: repoUrl, label: hasRepository ? "View Repo" : "View Org" };
 }
 
-// ─── element constructors ──────────────────────────────────────────────────
-
-function markdown(content: string): CardElement {
-  return { tag: "markdown", content };
-}
-
-function hr(): CardElement {
-  return { tag: "hr" };
-}
-
-/** A link button that opens `url`. */
-function linkButton(
-  label: string,
-  url: string,
-  type: "primary" | "default" = "primary",
-): CardElement {
-  return {
-    tag: "button",
-    text: { tag: "plain_text", content: label },
-    type,
-    size: "medium",
-    behaviors: [{ type: "open_url", default_url: url }],
-  };
-}
-
-/**
- * A column_set of equally-weighted columns. Each column is a list of elements.
- * Pairs nicely with markdown "info tiles" for author | stats layouts.
- */
-function columnSet(columns: CardElement[][]): CardElement {
-  return {
-    tag: "column_set",
-    flex_mode: "none",
-    background_style: "default",
-    columns: columns.map((elements) => ({
-      tag: "column",
-      width: "weighted",
-      weight: 1,
-      vertical_align: "top",
-      elements,
-    })),
-  };
-}
-
-// ─── card navigation ───────────────────────────────────────────────────────
-
-/** A navigation target: the label to render, the URL it opens, and its style. */
-interface NavTarget {
-  label: string;
-  /** Absent when the payload carries no URL for this target. */
-  url?: string;
-  /**
-   * `primary` marks the card's own object. The repository is *secondary*
-   * navigation, so it always renders `default`. Spelled out at every call site
-   * rather than defaulted, so no target's style is left implicit — the single
-   * button left behind by a missing object URL used to come out `primary`,
-   * disagreeing with the `star` and fallback cards' own repo buttons.
-   */
-  type: "primary" | "default";
-}
-
-/**
- * The navigation a card ends with: its own object(s) first, then the repository.
- *
- * Two #26 rules live here rather than in each builder:
- *
- *   - a target with no URL drops its own button. It is never re-pointed at the
- *     repository under the object's label — that is how "View PR" came to open
- *     the repo, and "View files" a `<repo url>/files` that does not exist;
- *   - "View Repo" is added only when `repository.html_url` holds a real URL (an
- *     org-scoped event has no repository to open) and only when no other button
- *     already opens that same URL.
- *
- * Cards that already navigate to the repository compose their own single button
- * instead of calling this, so no second repo link is added to them.
- *
- * One button renders bare, several share an equally-weighted row. The card's own
- * object is `primary`; the repository added here is always `default`.
- */
-function navigationButtons(
-  targets: readonly NavTarget[],
-  repoUrl: string,
-): CardElement[] {
-  const buttons = targets.filter(
-    (target): target is NavTarget & { url: string } => Boolean(target.url),
-  );
-  if (repoUrl && !buttons.some((button) => button.url === repoUrl)) {
-    buttons.push({ label: "View Repo", url: repoUrl, type: "default" });
-  }
-  if (buttons.length === 0) return [];
-  if (buttons.length === 1) {
-    const only = buttons[0]!;
-    return [linkButton(only.label, only.url, only.type)];
-  }
-  return [
-    columnSet(
-      buttons.map((button) => [
-        linkButton(button.label, button.url, button.type),
-      ]),
-    ),
-  ];
-}
-
 // ─── event-specific builders ───────────────────────────────────────────────
 
 /**
@@ -547,57 +354,6 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
     },
     elements,
   };
-}
-
-/**
- * Map a PR/issue action to a colored badge.
- *
- * The palette is governed by one rule: an action the reader may need to *act
- * on* gets a colour of its own, and routine churn stays `neutral` so it can
- * never be mistaken for a signal. (Tag colours are a small finite enum, so
- * pairwise distinguishability across every action is not the goal — telling
- * "needs attention" apart from "noise" is.)
- */
-function actionBadge(action: string): HeaderBadge {
-  const map: Record<string, TagColor> = {
-    // Activation / progress.
-    opened: "turquoise",
-    reopened: "green",
-    created: "wathet",
-    ready_for_review: "blue",
-    published: "turquoise",
-    released: "turquoise",
-    prereleased: "yellow",
-    // Terminal or destructive.
-    closed: "red",
-    deleted: "red",
-    unpublished: "red",
-    merged: "violet",
-    // Needs the reader to act.
-    review_requested: "orange",
-    assigned: "indigo",
-    converted_to_draft: "yellow",
-    transferred: "carmine",
-    renamed: "purple",
-    publicized: "red",
-    // Routine churn — deliberately neutral.
-    synchronize: "neutral",
-    labeled: "neutral",
-    unlabeled: "neutral",
-    unassigned: "neutral",
-    review_request_removed: "neutral",
-    milestoned: "neutral",
-    demilestoned: "neutral",
-    edited: "neutral",
-    updated: "neutral",
-    locked: "neutral",
-    unlocked: "neutral",
-    pinned: "neutral",
-    unpinned: "neutral",
-    auto_merge_enabled: "neutral",
-    auto_merge_disabled: "neutral",
-  };
-  return { text: action, color: map[action] ?? "neutral" };
 }
 
 /**
@@ -845,24 +601,21 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   const hasRepository = p.repository !== undefined && p.repository !== null;
 
   // Build a richer body than just "event · action": surface comment content,
-  // the parent issue/PR title+number, and org/member details when present.
+  // the parent discussion's title, and org/member details when present.
   const lines: string[] = [];
   lines.push(`**${md(message.event)}**${message.action ? ` · ${md(message.action)}` : ""}`);
 
-  // Comment-bearing events: issue_comment / commit_comment / discussion /
-  // discussion_comment all nest a `comment` (or `discussion`) with a body.
+  // Comment-bearing events that still reach the fallback — commit_comment,
+  // pull_request_review_comment, discussion_comment — nest a `comment` (or a
+  // `discussion`) with a body. `issue_comment` used to be the event that landed
+  // here carrying a top-level `issue`; it has a builder of its own now (#21),
+  // and nothing else on this path carries an `issue`, so reading one is gone
+  // rather than left unreachable.
   const comment = asObj(p.comment);
   const commentBody = truncate(asStr(comment.body), 300);
-  // The parent issue/PR for issue_comment.
-  const issue = asObj(p.issue);
-  const issueTitle = asStr(issue.title);
-  const issueNumber = asNum(issue.number);
-  const discussion = asObj(p.discussion);
-  const discussionTitle = asStr(discussion.title);
+  const discussionTitle = asStr(asObj(p.discussion).title);
 
-  if (issueTitle) {
-    lines.push(`### ${md(issueTitle)}${issueNumber !== undefined ? ` #${issueNumber}` : ""}`);
-  } else if (discussionTitle) {
+  if (discussionTitle) {
     lines.push(`### ${md(discussionTitle)}`);
   }
   if (commentBody) {
@@ -956,6 +709,10 @@ export function buildCard(message: EventMessage): FeishuCard {
       return buildStarCard(message, body);
     case "fork":
       return buildForkCard(message, body);
+    case "issue_comment":
+      return buildIssueCommentCard(message, body);
+    case "repository":
+      return buildRepositoryCard(message, body);
     default:
       return buildFallbackCard(message, body);
   }

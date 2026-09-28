@@ -3,141 +3,76 @@ import { buildCard } from "./feishu-cards";
 import { renderFormatted } from "../render";
 import { findTemplate, loadSeedConfig, resolveRoute } from "../config";
 import type { EventMessage } from "../../types";
-
-/** Minimal EventMessage with a raw GitHub-shaped payload + optional formatted body. */
-function msg(
-  event: string,
-  payload: Record<string, unknown>,
-  opts: { action?: string; formattedBody?: string; ref?: string } = {},
-): EventMessage {
-  return {
-    id: "evt-1",
-    event,
-    action: opts.action,
-    ref: opts.ref,
-    repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    actor: { login: "alice", avatar_url: "https://gh/alice.png" },
-    payload,
-    metadata: {},
-    formatted: opts.formattedBody
-      ? { title: "t", body: opts.formattedBody }
-      : undefined,
-  };
-}
-
-/**
- * The same message with no repository url — what an org-scoped or partial
- * payload resolves to (webhook.ts falls back to "" when neither the repository
- * nor the organization carries one). `msg()` always supplies a url, so the
- * missing-url cases need their own constructor.
- */
-function msgWithoutRepoUrl(
-  event: string,
-  payload: Record<string, unknown>,
-  action?: string,
-): EventMessage {
-  return {
-    ...msg(event, payload, { action }),
-    repository: { full_name: "org/repo", html_url: "" },
-  };
-}
+import {
+  cardText,
+  elementMarkdown,
+  findButtons,
+  findButtonUrls,
+  findRawButtons,
+  msg,
+  msgWithoutRepoUrl,
+  prodCard,
+} from "./feishu-card-test-helpers";
 
 /** `n` GitHub-shaped labels, for the label-rendering tests. */
 function someLabels(n: number): { name: string }[] {
   return Array.from({ length: n }, (_, i) => ({ name: `label-${i}` }));
 }
 
-/**
- * Every button with its raw destination and style, recursing into column_set
- * columns.
- *
- * A button whose `default_url` is empty is kept (`url: ""`) rather than
- * dropped: a dead button opens nothing when clicked, so a helper that filtered
- * empty targets out could not tell it apart from no button at all.
- */
-function findRawButtons(
-  elements: unknown[],
-): { label: string; url: string; type: string }[] {
-  const buttons: { label: string; url: string; type: string }[] = [];
-  for (const el of elements) {
-    const tag = (el as { tag?: string }).tag;
-    if (tag === "button") {
-      const label = (el as { text?: { content?: string } }).text?.content ?? "";
-      const type = (el as { type?: string }).type ?? "";
-      const behaviors = (el as { behaviors?: { default_url?: string }[] }).behaviors ?? [];
-      if (behaviors.length === 0) buttons.push({ label, url: "", type });
-      for (const b of behaviors) buttons.push({ label, url: b.default_url ?? "", type });
-    }
-    if (tag === "column_set") {
-      for (const col of (el as { columns?: { elements?: unknown[] }[] }).columns ?? []) {
-        buttons.push(...findRawButtons((col.elements ?? []) as unknown[]));
-      }
-    }
+// ─── helpers the describes below share ─────────────────────────────────────
+//
+// These sit at module scope rather than inside the `describe` that uses them
+// because none of them reads a binding from its enclosing block — and oxlint's
+// `consistent-function-scoping` reports a nested function that reaches only for
+// imports (a same-file declaration counts as a capture, an import does not).
+// The helpers that *do* capture their describe's fixtures stay where they are.
+
+/** A PR card for `action`, with optional extra `pull_request` fields. */
+const prCard = (action: string, extra: Record<string, unknown> = {}) =>
+  buildCard(
+    msg(
+      "pull_request",
+      { action, number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra } },
+      { action },
+    ),
+  );
+
+/** Resolve an action's badge colour through the card that actually emits it. */
+function badgeColor(event: string, action: string): string | undefined {
+  const payload: Record<string, unknown> = { action, number: 1 };
+  if (event === "pull_request") {
+    payload.pull_request = { title: "t", html_url: "u", user: { login: "x" } };
   }
-  return buttons;
+  return buildCard(msg(event, payload, { action })).header.badges?.[0]?.color;
 }
 
-/** Buttons that actually open something. */
-function findButtons(elements: unknown[]): { label: string; url: string }[] {
-  return findRawButtons(elements)
-    .filter((button) => button.url.length > 0)
-    .map(({ label, url }) => ({ label, url }));
-}
+/** All markdown text in the card, concatenated. */
+const textOf = (message: EventMessage): string => elementMarkdown(buildCard(message).elements);
 
-/** Recursively collect button open_url destinations from elements + columns. */
-function findButtonUrls(elements: unknown[]): string[] {
-  return findButtons(elements).map((button) => button.url);
-}
+/** A one-commit push whose commit message is `commitMessage`. */
+const pushWith = (commitMessage: string, opts: { ref?: string; author?: string } = {}): EventMessage =>
+  msg("push", {
+    ref: opts.ref ?? "refs/heads/main",
+    total_commits: 1,
+    commits: [{ id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } }],
+  }, { ref: opts.ref ?? "refs/heads/main" });
 
-/** Stringify a card's elements (recursing into column_set columns) so we can
- * grep for inline markup like <font> and <text_tag>. */
-function elementMarkdown(elements: unknown[]): string {
-  const out: string[] = [];
-  const walk = (els: unknown[]): void => {
-    for (const el of els) {
-      const tag = (el as { tag?: string }).tag;
-      if (tag === "markdown") {
-        const content = (el as { content?: string }).content;
-        if (typeof content === "string") out.push(content);
-      } else if (tag === "div") {
-        const text = (el as { text?: { content?: string } }).text;
-        if (text?.content) out.push(text.content);
-        for (const f of (el as { fields?: { text?: { content?: string } }[] }).fields ?? []) {
-          if (f.text?.content) out.push(f.text.content);
-        }
-      } else if (tag === "column_set") {
-        for (const col of (el as { columns?: { elements?: unknown[] }[] }).columns ?? []) {
-          walk((col.elements ?? []) as unknown[]);
-        }
-      }
-    }
-  };
-  walk(elements);
-  return out.join("\n");
-}
-
-/**
- * Build a card through the real production path — template render, then card
- * assembly. Tests that read payload fields go through here: calling
- * `buildCard()` directly cannot see the template/composition layer, which is
- * where #16's bug lived and what #17 asked the tests to cover.
- */
-function prodCard(
+/** Buttons of a card built through the production path, in render order. */
+const buttonsOf = (
   event: string,
   payload: Record<string, unknown>,
   action?: string,
-): ReturnType<typeof buildCard> {
-  return buildCard(renderFormatted(msg(event, payload, { action }), undefined));
-}
+): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
 
-/** All markdown text of a card built through the production path. */
-function cardText(
+/** Label + style of each button a card renders, for the weight assertions. */
+const stylesOf = (
   event: string,
   payload: Record<string, unknown>,
   action?: string,
-): string {
-  return elementMarkdown(prodCard(event, payload, action).elements);
-}
+): string[] =>
+  findRawButtons(prodCard(event, payload, action).elements).map(
+    (button) => `${button.label}:${button.type}`,
+  );
 
 describe("buildCard · push", () => {
   const card = buildCard(
@@ -366,15 +301,6 @@ describe("buildCard · pull_request", () => {
 });
 
 describe("buildCard · pull_request header reflects the action (#15)", () => {
-  const prCard = (action: string, extra: Record<string, unknown> = {}) =>
-    buildCard(
-      msg(
-        "pull_request",
-        { action, number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra } },
-        { action },
-      ),
-    );
-
   it("keeps an open PR purple", () => {
     expect(prCard("opened").header.template).toBe("purple");
   });
@@ -392,26 +318,17 @@ describe("buildCard · pull_request header reflects the action (#15)", () => {
 });
 
 describe("buildCard · action badge palette (#15)", () => {
-  /** Resolve an action's badge colour through the card that actually emits it. */
-  function badgeColor(event: string, action: string): string | undefined {
-    const payload: Record<string, unknown> = { action, number: 1 };
-    if (event === "pull_request") {
-      payload.pull_request = { title: "t", html_url: "u", user: { login: "x" } };
-    }
-    return buildCard(msg(event, payload, { action })).header.badges?.[0]?.color;
-  }
-
   it("applies the palette on the fallback card, not only the dedicated builders", () => {
     // Events without a dedicated builder go through buildFallbackCard, which
     // used to hardcode a neutral badge — silently disabling the palette for the
-    // ~30 event types that have no builder of their own. The `repository`
-    // rows above cover this too; this test exists so the coverage is explicit
-    // and cannot be lost by editing that table.
-    const card = buildCard(msg("repository", { action: "transferred" }, { action: "transferred" }));
+    // ~30 event types that have no builder of their own. `label` is one of
+    // those; its `deleted` action is in the palette, so the palette has to
+    // reach the fallback.
+    const card = buildCard(msg("label", { action: "deleted" }, { action: "deleted" }));
     // header `grey` is buildFallbackCard's signature — assert it so this test
     // cannot silently start exercising a different builder.
     expect(card.header.template).toBe("grey");
-    expect(card.header.badges).toContainEqual({ text: "transferred", color: "carmine" });
+    expect(card.header.badges).toContainEqual({ text: "deleted", color: "red" });
   });
 
   it("gives an action the reader may need to act on a colour of its own", () => {
@@ -639,8 +556,10 @@ describe("buildCard · fallback", () => {
   it("labels View Repo (not View Org) for a repo event whose repo belongs to an org (#13)", () => {
     // GitHub repo-scoped payloads include BOTH repository AND organization
     // when the repo is org-owned. Must not be misdetected as an org event.
-    const card = buildCard(msg("issue_comment", {
+    // (`label` has no dedicated builder, so this stays a fallback assertion.)
+    const card = buildCard(msg("label", {
       action: "created",
+      label: { name: "bug" },
       repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
       organization: { login: "org" },
     }, { action: "created" }));
@@ -650,22 +569,6 @@ describe("buildCard · fallback", () => {
       const content = (b as { text?: { content?: string } }).text?.content ?? "";
       expect(content).not.toBe("View Org");
     }
-  });
-
-  it("surfaces comment body + issue title/number for issue_comment (#13)", () => {
-    const card = buildCard(msg("issue_comment", {
-      action: "created",
-      issue: { number: 42, title: "Login broken", html_url: "https://github.com/org/repo/issues/42" },
-      comment: { body: "I can reproduce on Safari", html_url: "https://github.com/org/repo/issues/42#issuecomment-1" },
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    }, { action: "created" }));
-    const text = elementMarkdown(card.elements);
-    expect(text).toContain("Login broken");
-    expect(text).toContain("#42");
-    expect(text).toContain("I can reproduce on Safari");
-    // Button links to the comment and is labeled "View Comment".
-    const urls = findButtonUrls(card.elements);
-    expect(urls).toContain("https://github.com/org/repo/issues/42#issuecomment-1");
   });
 
   it("labels View Org only for true org-scoped events (no repository in payload)", () => {
@@ -724,16 +627,6 @@ describe("buildCard · schema correctness", () => {
 
 describe("buildCard · user text is not interpreted as card markup (#16)", () => {
   const AT = "<at id=all></at>";
-
-  /** All markdown text in the card, concatenated. */
-  const textOf = (message: EventMessage): string => elementMarkdown(buildCard(message).elements);
-
-  const pushWith = (commitMessage: string, opts: { ref?: string; author?: string } = {}): EventMessage =>
-    msg("push", {
-      ref: opts.ref ?? "refs/heads/main",
-      total_commits: 1,
-      commits: [{ id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } }],
-    }, { ref: opts.ref ?? "refs/heads/main" });
 
   it("escapes an <at> tag smuggled through a commit message", () => {
     const text = textOf(pushWith(AT));
@@ -813,9 +706,11 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
     // populated formatted.body, and buildFallbackCard composes its body with
     // `body || lines` — so a non-empty default replaced, and therefore
     // discarded, everything #12/#13/#14 added to the fallback card.
-    const message = msg("issue_comment", {
+    // `discussion_comment` is used here because it is still a fallback event
+    // (`issue_comment` now has a builder of its own, #21).
+    const message = msg("discussion_comment", {
       action: "created",
-      issue: { number: 42, title: "Login broken", html_url: "u" },
+      discussion: { title: "Login broken" },
       comment: { body: "I can reproduce on Safari", html_url: "u#1" },
     }, { action: "created" });
     const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
@@ -837,11 +732,11 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
   it("keeps the fallback card's own content when a template IS configured", () => {
     // The fallback composed its body with `body || lines`, so a configured
     // template replaced — and therefore discarded — the comment text, parent
-    // issue title and membership details. Configuring a template must not make
-    // the card less informative than leaving it unset.
-    const message = msg("issue_comment", {
+    // discussion title and membership details. Configuring a template must not
+    // make the card less informative than leaving it unset.
+    const message = msg("discussion_comment", {
       action: "created",
-      issue: { number: 42, title: "Login broken", html_url: "u" },
+      discussion: { title: "Login broken" },
       comment: { body: "I can reproduce on Safari", html_url: "u#1" },
     }, { action: "created" });
     const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
@@ -1121,13 +1016,6 @@ describe("buildCard · fork button (#17)", () => {
 });
 
 describe("buildCard · navigation buttons (#26)", () => {
-  /** Buttons of a card built through the production path, in render order. */
-  const buttonsOf = (
-    event: string,
-    payload: Record<string, unknown>,
-    action?: string,
-  ): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
-
   /**
    * One GitHub-shaped fixture per builder, keyed by event so a test names the
    * card it means rather than an array position that shifts when one is added.
@@ -1188,6 +1076,23 @@ describe("buildCard · navigation buttons (#26)", () => {
     fork: {
       payload: { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } },
     },
+    issue_comment: {
+      payload: {
+        action: "created",
+        issue: { number: 8, title: "Bug", html_url: "https://github.com/org/repo/issues/8" },
+        comment: {
+          body: "me too",
+          html_url: "https://github.com/org/repo/issues/8#issuecomment-1",
+          user: { login: "carol" },
+        },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+      action: "created",
+    },
+    repository: {
+      payload: { action: "renamed", repository: { full_name: "org/repo", html_url: REPO_URL } },
+      action: "renamed",
+    },
     deployment: {
       payload: {
         deployment: { id: 1 },
@@ -1195,16 +1100,6 @@ describe("buildCard · navigation buttons (#26)", () => {
       },
     },
   };
-
-  /** Label + style of each button a card renders, for the weight assertions. */
-  const stylesOf = (
-    event: string,
-    payload: Record<string, unknown>,
-    action?: string,
-  ): string[] =>
-    findRawButtons(prodCard(event, payload, action).elements).map(
-      (button) => `${button.label}:${button.type}`,
-    );
 
   /** Buttons of the canonical fixture for `event`, in render order. */
   const fixtureButtons = (event: string): { label: string; url: string }[] => {
