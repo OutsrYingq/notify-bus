@@ -21,6 +21,11 @@
 import type { EventMessage } from "../../types";
 import { buildIssueCommentCard } from "./feishu-comment-card";
 import {
+  buildDeploymentStatusCard,
+  buildReviewCard,
+  buildWorkflowRunCard,
+} from "./feishu-result-cards";
+import {
   actionBadge,
   asArr,
   asNum,
@@ -32,6 +37,7 @@ import {
   markdown,
   md,
   navigationButtons,
+  shortSha,
   truncate,
   type CardColor,
   type CardElement,
@@ -42,11 +48,6 @@ import {
 import { buildRepositoryCard } from "./feishu-repository-card";
 
 // ─── text helpers ──────────────────────────────────────────────────────────
-
-/** Short sha (first 7 chars). */
-function shortSha(sha: string | undefined): string {
-  return sha && sha.length > 7 ? sha.slice(0, 7) : (sha ?? "");
-}
 
 /** `refs/heads/main` → `main`, `refs/tags/v1` → `v1`. */
 function extractBranch(ref: string | undefined): string | undefined {
@@ -713,6 +714,12 @@ export function buildCard(message: EventMessage): FeishuCard {
       return buildIssueCommentCard(message, body);
     case "repository":
       return buildRepositoryCard(message, body);
+    case "pull_request_review":
+      return buildReviewCard(message, body);
+    case "workflow_run":
+      return buildWorkflowRunCard(message, body);
+    case "deployment_status":
+      return buildDeploymentStatusCard(message, body);
     default:
       return buildFallbackCard(message, body);
   }

@@ -89,6 +89,11 @@ export function asArr(value: unknown): unknown[] {
 
 // ─── text helpers ──────────────────────────────────────────────────────────
 
+/** Short sha (first 7 chars). */
+export function shortSha(sha: string | undefined): string {
+  return sha && sha.length > 7 ? sha.slice(0, 7) : (sha ?? "");
+}
+
 /** Truncate + ellipsis. Returns "" for empty/whitespace. */
 export function truncate(text: string | undefined, max: number): string {
   const clean = (text ?? "").replace(/\r/g, "").trim();
