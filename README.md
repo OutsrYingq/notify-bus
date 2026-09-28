@@ -35,14 +35,14 @@ Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, rel
                                                     │  (Feishu today; Slack / DingTalk / WeCom / Discord next)
 ```
 
-- **Webhook in, notifications out.** Verify GitHub's HMAC-SHA256 signature against the raw body, parse the event, run it through a configurable middleware pipeline, render a template, and dispatch.
+- **Webhook in, notifications out.** Verify GitHub's HMAC-SHA256 signature against the raw body, match the event against your routes, render the configured template, and dispatch it to the channel's adapter. *(The configurable middleware pipeline — Filter / Enricher / Template — is the M2 milestone and is not built yet.)*
 - **Multi-channel by design, not by accident.** A `ChannelAdapter` interface is the only thing a new channel needs to implement. Feishu is the first adapter; the routing and config layer is channel-agnostic.
 - **Configure without redeploying.** A built-in admin UI (React + Vite + Tailwind) edits routes, channels, and templates against a REST API — backed by `bun:sqlite`. No YAML round-trips to adjust a rule.
 - **One image, one process.** Ships as a single Bun process that serves the API *and* the built frontend. One Docker container, one volume for data. The repo is a Bun workspace monorepo (`packages/server` + `packages/web`) that builds into that one image.
 
 ## 5-minute tour
 
-*(Pipeline is under construction — commands below show the intended UX.)*
+*(The steps below work today: GitHub webhooks in, Feishu cards out. The configurable middleware pipeline is M2 and not built yet.)*
 
 ```bash
 # Run locally
@@ -114,7 +114,7 @@ See [Discussions](https://github.com/lorelum/notify-bus/discussions) for what's 
 
 ## Project status
 
-🟡 **Early development.** Scaffold + governance are in place; the core pipeline lands in M1. This is the right moment to shape the direction — join [Discussions](https://github.com/lorelum/notify-bus/discussions).
+🟡 **Early development.** The M1 chain works end to end — GitHub webhooks in, Feishu cards out. The configurable middleware pipeline (M2) is not built yet. This is the right moment to shape the direction — join [Discussions](https://github.com/lorelum/notify-bus/discussions).
 
 ## Contributing
 
