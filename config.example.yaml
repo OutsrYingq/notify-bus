@@ -26,8 +26,35 @@ channels:
     enabled: true
 
 routes:
-  # Quiet-by-default: only the four core event types are delivered. Add other
-  # event names here when your team wants to receive them.
+  # Choosing events. Only the four types in `match_event` below are delivered;
+  # every other event GitHub sends is dropped until you name it in a route — a
+  # config edit, nothing more. Events that have a dedicated card render richly,
+  # the rest become the plain grey fallback card (see
+  # packages/server/src/lib/adapters/).
+  #
+  # Some events are different observation points on the same activity — pick by
+  # how your tooling reports, expecting one notification per source you add:
+  #   - CI: `workflow_run` for GitHub Actions; `status` for an external CI on
+  #     the Statuses API; `check_run` / `check_suite` for one on the Checks API.
+  #   - Deployment: `deployment_status` is a deployment's progress and result;
+  #     `deployment` is a different event, the moment one is created. Neither
+  #     replaces the other — keep both if you want that moment too.
+  #
+  # Three pairs of names look interchangeable. Nothing here established that one
+  # action fires both, or that subscribing to both sends two notifications, so
+  # send yourself a test event of each half before relying on either:
+  #   - `star` / `watch` — `star` has its own card, `watch` is the grey fallback
+  #   - `repository` action `publicized` / `public`
+  #   - `team` action `added_to_repository` / `team_add`
+  #
+  # Overlap between different actions is expected too: merging a pull request
+  # also pushes to the base branch, so `pull_request` and `push` may both
+  # arrive; pushing to a pull request's branch also re-sends `pull_request`
+  # (`synchronize`) alongside `push`. Adding `synchronize` to `exclude_action`
+  # below drops that one — except for a fork pull request, whose push lands in
+  # the fork and can leave `synchronize` as the only delivery. All of this comes
+  # from GitHub's event semantics rather than a run measured here, so confirm it
+  # on your own repositories before silencing anything.
   - name: core-events-to-team
     match_repo: "*" # `*` matches every repository
     match_event: push,pull_request,issues,release
