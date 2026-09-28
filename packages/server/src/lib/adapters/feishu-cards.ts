@@ -345,17 +345,6 @@ function linkButton(
   };
 }
 
-/** Two buttons side by side. */
-function buttonRow(
-  left: { label: string; url: string; type?: "primary" | "default" },
-  right: { label: string; url: string; type?: "primary" | "default" },
-): CardElement {
-  return columnSet([
-    [linkButton(left.label, left.url, left.type ?? "primary")],
-    [linkButton(right.label, right.url, right.type ?? "default")],
-  ]);
-}
-
 /**
  * A column_set of equally-weighted columns. Each column is a list of elements.
  * Pairs nicely with markdown "info tiles" for author | stats layouts.
@@ -375,6 +364,58 @@ function columnSet(columns: CardElement[][]): CardElement {
   };
 }
 
+// ─── card navigation ───────────────────────────────────────────────────────
+
+/** A navigation target: the label to render and the URL it opens, if any. */
+interface NavTarget {
+  label: string;
+  /** Absent when the payload carries no URL for this target. */
+  url?: string;
+  /** `primary` marks the card's own object; every other target renders `default`. */
+  type?: "primary" | "default";
+}
+
+/**
+ * The navigation a card ends with: its own object(s) first, then the repository.
+ *
+ * Two #26 rules live here rather than in each builder:
+ *
+ *   - a target with no URL drops its own button. It is never re-pointed at the
+ *     repository under the object's label — that is how "View PR" came to open
+ *     the repo, and "View files" a `<repo url>/files` that does not exist;
+ *   - "View Repo" is added only when `repository.html_url` holds a real URL (an
+ *     org-scoped event has no repository to open) and only when no other button
+ *     already opens that same URL.
+ *
+ * Cards that already navigate to the repository compose their own single button
+ * instead of calling this, so no second repo link is added to them.
+ *
+ * One button renders bare, several share an equally-weighted row.
+ */
+function navigationButtons(
+  targets: readonly NavTarget[],
+  repoUrl: string,
+): CardElement[] {
+  const buttons = targets.filter(
+    (target): target is NavTarget & { url: string } => Boolean(target.url),
+  );
+  if (repoUrl && !buttons.some((button) => button.url === repoUrl)) {
+    buttons.push({ label: "View Repo", url: repoUrl });
+  }
+  if (buttons.length === 0) return [];
+  if (buttons.length === 1) {
+    const only = buttons[0]!;
+    return [linkButton(only.label, only.url, only.type ?? "primary")];
+  }
+  return [
+    columnSet(
+      buttons.map((button) => [
+        linkButton(button.label, button.url, button.type ?? "default"),
+      ]),
+    ),
+  ];
+}
+
 // ─── event-specific builders ───────────────────────────────────────────────
 
 /**
@@ -387,6 +428,7 @@ const MAX_PUSH_COMMITS = 2048;
 function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
+  const repoUrl = message.repository.html_url;
   const pusher =
     asStr(asObj(p.pusher).name) ?? asStr(asObj(p.sender).login) ?? message.actor.login;
   const branch = extractBranch(message.ref);
@@ -472,7 +514,15 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
 
   // A deleted branch's `after` sha is all zeros, so a compare link would lead
   // nowhere.
-  if (compare && !deleted) elements.push(linkButton("Compare changes", compare));
+  const compareUrl = deleted ? undefined : compare;
+  // The commit list links to individual commits; nothing yet reached the
+  // repository itself, whose only mention was the plain-text subtitle (#26).
+  elements.push(
+    ...navigationButtons(
+      [{ label: "Compare changes", url: compareUrl, type: "primary" }],
+      repoUrl,
+    ),
+  );
 
   const badges: HeaderBadge[] = [{ text: "push", color: "blue" }];
   if (forced) badges.push({ text: "force push", color: "red" });
@@ -564,7 +614,10 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   const action = message.action ?? asStr(p.action) ?? "updated";
   const pr = asObj(p.pull_request);
   const title = asStr(pr.title) ?? "(untitled)";
-  const prUrl = asStr(pr.html_url) ?? repoUrl;
+  // No `?? repoUrl`: papering over a missing PR url with the repo url is what
+  // made "View PR" open the repository, and "View files" a `<repo url>/files`
+  // that does not exist. A missing url now drops the button (#26).
+  const prUrl = asStr(pr.html_url);
   const prBody = truncate(asStr(pr.body), 300);
   const user = asStr(asObj(pr.user).login) ?? message.actor.login;
   const additions = asNum(pr.additions);
@@ -597,10 +650,16 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   // repository concept (#17).
   if (labels.length > 0) elements.push(markdown(renderLabels(labels)));
 
-  elements.push(buttonRow(
-    { label: "View PR", url: prUrl, type: "primary" },
-    { label: "View files", url: `${prUrl}/files`, type: "default" },
-  ));
+  elements.push(
+    ...navigationButtons(
+      [
+        { label: "View PR", url: prUrl, type: "primary" },
+        // `/files` only means anything appended to a real PR url.
+        { label: "View files", url: prUrl ? `${prUrl}/files` : undefined },
+      ],
+      repoUrl,
+    ),
+  );
 
   const badges: HeaderBadge[] = [actionBadge(action)];
   if (merged) badges.push({ text: "merged", color: "violet" });
@@ -627,7 +686,9 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
   const action = message.action ?? asStr(p.action) ?? "updated";
   const issue = asObj(p.issue);
   const title = asStr(issue.title) ?? "(untitled)";
-  const issueUrl = asStr(issue.html_url) ?? repoUrl;
+  // As on the PR card: no `?? repoUrl`, so a missing issue url drops the button
+  // instead of opening the repository under an issue label (#26).
+  const issueUrl = asStr(issue.html_url);
   const issueBody = truncate(asStr(issue.body), 300);
   const user = asStr(asObj(issue.user).login) ?? message.actor.login;
   const labels = asArr(issue.labels).map((l) => asStr(asObj(l).name)).filter(Boolean) as string[];
@@ -649,7 +710,12 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
     elements.push(markdown(`👤 **${md(user)}**`));
   }
 
-  elements.push(linkButton("View Issue", issueUrl));
+  elements.push(
+    ...navigationButtons(
+      [{ label: "View Issue", url: issueUrl, type: "primary" }],
+      repoUrl,
+    ),
+  );
 
   return {
     header: {
@@ -669,7 +735,9 @@ function buildReleaseCard(message: EventMessage, body: string): FeishuCard {
   const release = asObj(p.release);
   const name = asStr(release.name) ?? asStr(release.tag_name) ?? "release";
   const tag = asStr(release.tag_name) ?? "";
-  const releaseUrl = asStr(release.html_url) ?? repoUrl;
+  // As on the PR and issue cards: a missing release url drops the button rather
+  // than opening the repository under a release label (#26).
+  const releaseUrl = asStr(release.html_url);
   const relBody = truncate(asStr(release.body), 600);
   const author = asStr(asObj(release.author).login) ?? message.actor.login;
   const prerelease = Boolean(release.prerelease);
@@ -685,7 +753,12 @@ function buildReleaseCard(message: EventMessage, body: string): FeishuCard {
   if (assetCount > 0) rightLines.push(`📦 ${assetCount} asset${assetCount === 1 ? "" : "s"}`);
   elements.push(markdown(rightLines.join("\n")));
 
-  elements.push(linkButton("View Release", releaseUrl));
+  elements.push(
+    ...navigationButtons(
+      [{ label: "View Release", url: releaseUrl, type: "primary" }],
+      repoUrl,
+    ),
+  );
 
   const badges: HeaderBadge[] = [];
   if (tag) badges.push({ text: tag, color: "neutral" });
@@ -713,7 +786,10 @@ function buildStarCard(message: EventMessage, body: string): FeishuCard {
     markdown(`**${md(actor)}** ${verb} ⭐ ${maybeLink(repo, repoUrl)}`),
   ];
   if (body) elements.push(markdown(body));
-  elements.push(linkButton("View Repo", repoUrl, "default"));
+  // Already a repository link, so this card composes its own button rather than
+  // going through `navigationButtons` — which would add a second one (#26). All
+  // that is left is the dead-button guard: an empty url opens nothing (#6).
+  if (repoUrl) elements.push(linkButton("View Repo", repoUrl, "default"));
 
   return {
     header: { title: `⭐ ${verb}`, subtitle: repo, template: "wathet" },
@@ -736,10 +812,14 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
   // The body reads "A → B(fork)", so the button has to open the fork. It used
   // to point at the upstream repo, making the button and the text disagree
   // (#17). Without a forkee url there is no fork to open, so it falls back to
-  // the upstream repo and says so.
-  elements.push(
-    linkButton(forkeeUrl ? "View Fork" : "View Repo", forkeeUrl ?? repoUrl, "default"),
-  );
+  // the upstream repo and says so. The body already links upstream, so this card
+  // deliberately carries one button only — no second "View Repo" (#26).
+  const forkTarget = forkeeUrl ?? repoUrl;
+  if (forkTarget) {
+    elements.push(
+      linkButton(forkeeUrl ? "View Fork" : "View Repo", forkTarget, "default"),
+    );
+  }
 
   return {
     header: { title: `🍴 forked`, subtitle: repo, template: "wathet" },
