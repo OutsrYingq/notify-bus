@@ -351,7 +351,10 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
       // Red for a history rewrite: it is the one push kind that can destroy
       // work, so it must not look like an ordinary push.
       template: forced ? "red" : "blue",
-      badges,
+      // Feishu renders at most three `header.text_tag_list` entries. GitHub
+      // never sends these three flags together, but nothing in the code held
+      // that — a payload that did would push a badge out of view (#30).
+      badges: badges.slice(0, 3),
     },
     elements,
   };
@@ -688,6 +691,46 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   };
 }
 
+/** Builds one event's card — the signature every dedicated builder shares. */
+type CardBuilder = (message: EventMessage, body: string) => FeishuCard;
+
+/**
+ * Every event that ships a dedicated card, keyed by event name.
+ *
+ * The object literal is the guard the old `switch` could not give: a key cannot
+ * exist without its builder, so a half-registered event fails to compile, and
+ * `satisfies` holds every builder to the shared signature.
+ *
+ * Events that are *not* listed are not an error — GitHub sends far more than
+ * this adapter styles, and everything else renders through
+ * {@link buildFallbackCard}. Only the set this adapter promises to handle
+ * specially is exhaustive here (#30).
+ */
+const DEDICATED_CARDS = {
+  push: buildPushCard,
+  pull_request: buildPullRequestCard,
+  issues: buildIssuesCard,
+  release: buildReleaseCard,
+  star: buildStarCard,
+  fork: buildForkCard,
+  issue_comment: buildIssueCommentCard,
+  repository: buildRepositoryCard,
+  pull_request_review: buildReviewCard,
+  workflow_run: buildWorkflowRunCard,
+  deployment_status: buildDeploymentStatusCard,
+} satisfies Record<string, CardBuilder>;
+
+/** The events with a dedicated card, in registration order. */
+export const DEDICATED_EVENTS = Object.keys(DEDICATED_CARDS) as DedicatedEvent[];
+
+/** An event name that has a dedicated card. */
+export type DedicatedEvent = keyof typeof DEDICATED_CARDS;
+
+/** Whether `event` has a dedicated card rather than the fallback. */
+function isDedicatedEvent(event: string): event is DedicatedEvent {
+  return Object.hasOwn(DEDICATED_CARDS, event);
+}
+
 /**
  * Build a rich Feishu card for the given event, dispatching on event type.
  *
@@ -697,30 +740,6 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
  */
 export function buildCard(message: EventMessage): FeishuCard {
   const body = message.formatted?.body ?? "";
-  switch (message.event) {
-    case "push":
-      return buildPushCard(message, body);
-    case "pull_request":
-      return buildPullRequestCard(message, body);
-    case "issues":
-      return buildIssuesCard(message, body);
-    case "release":
-      return buildReleaseCard(message, body);
-    case "star":
-      return buildStarCard(message, body);
-    case "fork":
-      return buildForkCard(message, body);
-    case "issue_comment":
-      return buildIssueCommentCard(message, body);
-    case "repository":
-      return buildRepositoryCard(message, body);
-    case "pull_request_review":
-      return buildReviewCard(message, body);
-    case "workflow_run":
-      return buildWorkflowRunCard(message, body);
-    case "deployment_status":
-      return buildDeploymentStatusCard(message, body);
-    default:
-      return buildFallbackCard(message, body);
-  }
+  if (!isDedicatedEvent(message.event)) return buildFallbackCard(message, body);
+  return DEDICATED_CARDS[message.event](message, body);
 }

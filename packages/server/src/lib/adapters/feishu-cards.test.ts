@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildCard } from "./feishu-cards";
+import { buildCard, DEDICATED_EVENTS } from "./feishu-cards";
 import { renderFormatted } from "../render";
 import { findTemplate, loadSeedConfig, resolveRoute } from "../config";
 import type { EventMessage } from "../../types";
@@ -229,6 +229,30 @@ describe("buildCard · push · push state (#15)", () => {
     );
     expect(card.header.badges).toEqual([{ text: "push", color: "blue" }]);
     expect(card.header.template).toBe("blue");
+  });
+
+  it("never renders more than three header badges (#30)", () => {
+    // GitHub does not send these flags together, but nothing in the code held
+    // that: a payload that did rendered four `text_tag_list` entries, and Feishu
+    // only displays three of them. The first three now win, deliberately.
+    const card = buildCard(
+      msg(
+        "push",
+        {
+          ref: "refs/heads/main",
+          forced: true,
+          deleted: true,
+          created: true,
+          commits: [{ id: "abc1234567", message: "a" }],
+        },
+        { ref: "refs/heads/main" },
+      ),
+    );
+    expect(card.header.badges).toEqual([
+      { text: "push", color: "blue" },
+      { text: "force push", color: "red" },
+      { text: "branch deleted", color: "red" },
+    ]);
   });
 });
 
@@ -1360,6 +1384,45 @@ describe("buildCard · navigation buttons (#26)", () => {
         { action: "created" },
       );
       expect([event, resolveRoute(config, message).kind]).toEqual([event, "no_route"]);
+    }
+  });
+});
+
+describe("buildCard · dedicated card registry (#30)", () => {
+  it("registers exactly the events that have a dedicated card", () => {
+    // The registry replaced a `switch`, so dropping an entry no longer fails to
+    // compile anywhere — the event would just quietly start rendering as the
+    // fallback. This list is the checklist that makes such a removal visible.
+    expect([...DEDICATED_EVENTS].sort()).toEqual([
+      "deployment_status",
+      "fork",
+      "issue_comment",
+      "issues",
+      "pull_request",
+      "pull_request_review",
+      "push",
+      "release",
+      "repository",
+      "star",
+      "workflow_run",
+    ]);
+  });
+
+  it("dispatches every registered event to a card of its own", () => {
+    for (const event of DEDICATED_EVENTS) {
+      // buildFallbackCard titles itself `📋 <event>`, so this pins that none of
+      // the registered events falls through to it.
+      const title = prodCard(event, {}).header.title;
+      expect([event, title === `📋 ${event}`]).toEqual([event, false]);
+    }
+  });
+
+  it("leaves unregistered events on the fallback", () => {
+    // Not an error: GitHub sends far more events than this adapter styles, and
+    // `deployment` (unlike `deployment_status`) is one of them.
+    for (const event of ["deployment", "create", "delete", "watch"]) {
+      const card = prodCard(event, { ref: "v1.0.0", ref_type: "tag" });
+      expect([event, card.header.title]).toEqual([event, `📋 ${event}`]);
     }
   });
 });
