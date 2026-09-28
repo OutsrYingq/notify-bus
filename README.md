@@ -37,7 +37,7 @@ Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, rel
 
 - **Webhook in, notifications out.** Verify GitHub's HMAC-SHA256 signature against the raw body, match the event against your routes, render the configured template, and dispatch it to the channel's adapter. _(The configurable middleware pipeline — Filter / Enricher / Template — is the M2 milestone and is not built yet.)_
 - **Multi-channel by design, not by accident.** A `ChannelAdapter` interface is the only thing a new channel needs to implement. Feishu is the first adapter; the routing and config layer is channel-agnostic.
-- **Configure without redeploying.** A built-in admin UI (React + Vite + Tailwind) edits routes, channels, and templates against a REST API — backed by `bun:sqlite`. No YAML round-trips to adjust a rule.
+- **Configure without redeploying.** Today a rule change means editing `config.yaml` and restarting the process. _(M3)_ A built-in admin UI (React + Vite + Tailwind) will edit routes, channels, and templates against a REST API backed by `bun:sqlite`.
 - **One image, one process.** Ships as a single Bun process that serves the API _and_ the built frontend. One Docker container, one volume for data. The repo is a Bun workspace monorepo (`packages/server` + `packages/web`) that builds into that one image.
 
 ## 5-minute tour
@@ -54,18 +54,18 @@ bun run dev                # server on :3000, frontend on :5173 (Vite proxy)
 docker compose up -d       # serves API + built frontend on :3000
 ```
 
-Then point a GitHub webhook at `https://your-host/webhook`, add a Feishu custom-bot webhook as a channel in the admin UI, and add a route. Done.
+Then point a GitHub webhook at `https://your-host/webhook`, add a Feishu custom-bot webhook as a channel plus a route in `config.yaml`, and restart notify-bus — the config is read at startup.
 
 ## How it's different
 
-|                                 | GitHub Action / raw webhook | SaaS notifier   | **notify-bus**                  |
-| ------------------------------- | --------------------------- | --------------- | ------------------------------- |
-| **Self-hosted / own your data** | ✅                          | ❌              | ✅                              |
-| **Configurable pipeline**       | ❌ (recode to change)       | partial         | ✅ Filter / Enricher / Template |
-| **Visual admin UI**             | ❌                          | ✅              | ✅                              |
-| **Multi-channel**               | manual per channel          | per-plan limits | ✅ `ChannelAdapter` interface   |
-| **Templates per event**         | hardcoded                   | limited         | ✅ Handlebars, per event type   |
-| **License**                     | varies                      | proprietary     | ✅ MIT                          |
+|                                 | GitHub Action / raw webhook | SaaS notifier   | **notify-bus**                       |
+| ------------------------------- | --------------------------- | --------------- | ------------------------------------ |
+| **Self-hosted / own your data** | ✅                          | ❌              | ✅                                   |
+| **Configurable pipeline**       | ❌ (recode to change)       | partial         | 🚧 M2 — Filter / Enricher / Template |
+| **Visual admin UI**             | ❌                          | ✅              | 🚧 M4–M6                             |
+| **Multi-channel**               | manual per channel          | per-plan limits | ✅ `ChannelAdapter` interface        |
+| **Templates per event**         | hardcoded                   | limited         | ✅ Handlebars, per event type        |
+| **License**                     | varies                      | proprietary     | ✅ MIT                               |
 
 ## Architecture (in brief)
 
@@ -94,10 +94,10 @@ Then point a GitHub webhook at `https://your-host/webhook`, add a Feishu custom-
 └────────────────────────────────────────────────────────────┘
 ```
 
-Two config sources, merged at runtime:
+Configuration comes from `config.yaml` today:
 
-- **YAML** (`config.yaml`) — seed/bootstrap config, human-edited, supports hot reload.
-- **SQLite** (`data.db`) — the source of truth for routes, channels, templates, logs; edited via the admin UI / REST API.
+- **YAML** (`config.yaml`) — the only config source. Routes, channels and templates are read from it at startup, so an edit needs a restart; there is no hot reload yet.
+- **SQLite** (`data.db`) — _(M3)_ where routes, channels, templates and logs will live, edited through the admin UI / REST API, with the store winning over the YAML seed.
 
 ## Roadmap
 
