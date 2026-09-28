@@ -5,11 +5,14 @@
 # or exclude_event manually, and check later routes for fallback delivery.
 # Exclusions are route-local, not a global ban; a later route may still send.
 #
-# Copy to config.yaml (gitignored) and edit. The admin UI / SQLite store is
-# the live source of truth; this YAML is seed/bootstrap only — the DB wins
-# on conflict. See src/lib/config/index.ts.
+# Copy to config.yaml (gitignored) and edit. This YAML is the only config source
+# today: routes, channels and templates are read from it at startup, so an edit
+# needs a restart. The SQLite store, the admin UI that will edit it, and the
+# "DB wins on conflict" merge are M3 and not implemented yet. See
+# src/lib/config/index.ts.
 #
-# All fields are optional. Running DB-only (no config.yaml) is valid.
+# All fields are optional: no config.yaml at all is valid — nothing matches
+# until you add a route.
 #
 # NOTE on templates: the Feishu adapter builds a rich card per event type
 # (header color, buttons, stat tiles) in code, and the card already renders the
