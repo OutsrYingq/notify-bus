@@ -46,8 +46,5 @@ export function verifyGitHubSignature(
   // hex strings in constant time. Lengths are equal (both 64) by the guard
   // above + the digest length, so timingSafeEqual won't throw.
   const expectedHex = Buffer.from(expected.toString("hex"), "utf8");
-  return (
-    expectedHex.length === received.length &&
-    timingSafeEqual(expectedHex, received)
-  );
+  return expectedHex.length === received.length && timingSafeEqual(expectedHex, received);
 }

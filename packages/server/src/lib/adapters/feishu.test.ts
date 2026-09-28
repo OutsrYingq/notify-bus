@@ -72,7 +72,9 @@ describe("feishuAdapter.send", () => {
 
   it("returns messageId when Feishu includes one", async () => {
     globalThis.fetch = mock(() =>
-      Promise.resolve(mockFetchResponse({ code: 0, msg: "success", data: { message_id: "om_123" } })),
+      Promise.resolve(
+        mockFetchResponse({ code: 0, msg: "success", data: { message_id: "om_123" } }),
+      ),
     ) as unknown as typeof fetch;
     const result = await feishuAdapter.send(buildMessage(), {
       webhookUrl: WEBHOOK_URL,
@@ -109,7 +111,9 @@ describe("feishuAdapter.send", () => {
   });
 
   it("returns network when fetch throws", async () => {
-    globalThis.fetch = mock(() => Promise.reject(new Error("ECONNRESET"))) as unknown as typeof fetch;
+    globalThis.fetch = mock(() =>
+      Promise.reject(new Error("ECONNRESET")),
+    ) as unknown as typeof fetch;
     const result = await feishuAdapter.send(buildMessage(), {
       webhookUrl: WEBHOOK_URL,
     });

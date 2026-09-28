@@ -28,9 +28,7 @@ export function msg(
     actor: { login: "alice", avatar_url: "https://gh/alice.png" },
     payload,
     metadata: {},
-    formatted: opts.formattedBody
-      ? { title: "t", body: opts.formattedBody }
-      : undefined,
+    formatted: opts.formattedBody ? { title: "t", body: opts.formattedBody } : undefined,
   };
 }
 
@@ -135,10 +133,6 @@ export function prodCard(
 }
 
 /** All markdown text of a card built through the production path. */
-export function cardText(
-  event: string,
-  payload: Record<string, unknown>,
-  action?: string,
-): string {
+export function cardText(event: string, payload: Record<string, unknown>, action?: string): string {
   return elementMarkdown(prodCard(event, payload, action).elements);
 }

@@ -68,10 +68,7 @@ function commentHeaderColor(action: string): CardColor {
  * fallback rendered this event from `message.actor`, which names the editor
  * rather than the author on `edited` — the reason this builder exists (#21).
  */
-export function buildIssueCommentCard(
-  message: EventMessage,
-  body: string,
-): FeishuCard {
+export function buildIssueCommentCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;

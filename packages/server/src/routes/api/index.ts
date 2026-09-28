@@ -48,13 +48,17 @@ export const apiRoute = new Elysia({ prefix: "/api" })
     const limit = Math.min(Number(query.limit ?? 50), 100);
     return { logs: [] as unknown[], limit };
   })
-  .post("/test", ({ body }) => {
-    // M6: simulate an event through the pipeline + dispatch
-    return { status: "not_implemented", received: body };
-  }, {
-    body: t.Object({
-      eventType: t.String(),
-      repo: t.Optional(t.String()),
-      channelId: t.Number(),
-    }),
-  });
+  .post(
+    "/test",
+    ({ body }) => {
+      // M6: simulate an event through the pipeline + dispatch
+      return { status: "not_implemented", received: body };
+    },
+    {
+      body: t.Object({
+        eventType: t.String(),
+        repo: t.Optional(t.String()),
+        channelId: t.Number(),
+      }),
+    },
+  );

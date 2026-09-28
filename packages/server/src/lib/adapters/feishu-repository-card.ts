@@ -44,9 +44,7 @@ interface RepositoryChange {
   isPrivate?: boolean;
 }
 
-function resolveRepositoryChange(
-  payload: Record<string, unknown>,
-): RepositoryChange {
+function resolveRepositoryChange(payload: Record<string, unknown>): RepositoryChange {
   const changes = asObj(payload.changes);
   const fromName = asStr(asObj(asObj(changes.repository).name).from);
   // A repository owner is a `user` or an `organization`, and `changes.owner.from`
@@ -114,10 +112,7 @@ function repositoryHeaderColor(action: string): CardColor {
  * payload (or an action whose `changes` shape differs) must degrade to a card
  * with less detail, never to one that reads "formerly undefined" (#21).
  */
-export function buildRepositoryCard(
-  message: EventMessage,
-  body: string,
-): FeishuCard {
+export function buildRepositoryCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const action = message.action ?? asStr(p.action) ?? "updated";
@@ -136,10 +131,7 @@ export function buildRepositoryCard(
   if (action === "transferred" && change.previousOwner) {
     content.push(markdown(`➡️ from **${md(change.previousOwner)}**`));
   }
-  if (
-    (action === "privatized" || action === "publicized") &&
-    change.isPrivate !== undefined
-  ) {
+  if ((action === "privatized" || action === "publicized") && change.isPrivate !== undefined) {
     // The whole line exists so the reader can see which way the visibility
     // went — see `resolveRepositoryChange` for why `private` decides it.
     content.push(markdown(change.isPrivate ? "🔒 private" : "🌐 public"));
@@ -158,10 +150,7 @@ export function buildRepositoryCard(
   // one place; `navigationButtons` sees the url already present and adds no
   // second button.
   elements.push(
-    ...navigationButtons(
-      [{ label: "View Repo", url: repoUrl, type: "default" }],
-      repoUrl,
-    ),
+    ...navigationButtons([{ label: "View Repo", url: repoUrl, type: "default" }], repoUrl),
   );
 
   return {

@@ -29,9 +29,7 @@ describe("verifyGitHubSignature", () => {
 
   it("rejects a tampered body", () => {
     const sig = expectedSignature(SECRET, BODY);
-    const tampered = Buffer.from(
-      JSON.stringify({ zen: "keep it logically AWFUL" }),
-    );
+    const tampered = Buffer.from(JSON.stringify({ zen: "keep it logically AWFUL" }));
     expect(verifyGitHubSignature(tampered, sig, SECRET)).toBe(false);
   });
 
@@ -46,16 +44,12 @@ describe("verifyGitHubSignature", () => {
   });
 
   it("rejects non-hex content after the prefix", () => {
-    expect(verifyGitHubSignature(BODY, `${PREFIX}nothexatall!!`, SECRET)).toBe(
-      false,
-    );
+    expect(verifyGitHubSignature(BODY, `${PREFIX}nothexatall!!`, SECRET)).toBe(false);
   });
 
   it("rejects a signature whose hex length differs from the digest", () => {
     // SHA-256 hex is 64 chars; a wrong length must not reach timingSafeEqual.
-    expect(
-      verifyGitHubSignature(BODY, `${PREFIX}abc123`, SECRET),
-    ).toBe(false);
+    expect(verifyGitHubSignature(BODY, `${PREFIX}abc123`, SECRET)).toBe(false);
   });
 
   it("rejects an empty signature", () => {

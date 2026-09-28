@@ -1,0 +1,7 @@
+# Normalise line endings to LF in the index and in every checkout.
+#
+# oxfmt's `endOfLine` only accepts a fixed choice (lf / crlf / cr) — there is no
+# "preserve" — so consistent endings have to come from git. Without this, a
+# Windows checkout (core.autocrlf=true) is CRLF while the index is LF, and
+# `bun run fmt:check` fails on every file locally while passing on Linux CI.
+* text=auto eol=lf

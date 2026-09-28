@@ -76,9 +76,7 @@ describe("matchRoute", () => {
     expect(
       matchRoute(config, event({ event: "pull_request", action: "opened" }))?.channel.name,
     ).toBe("feishu-a");
-    expect(
-      matchRoute(config, event({ event: "pull_request", action: "closed" })),
-    ).toBeNull();
+    expect(matchRoute(config, event({ event: "pull_request", action: "closed" }))).toBeNull();
   });
 
   it("honors priority ordering (lower number wins)", () => {
@@ -116,9 +114,7 @@ describe("matchRoute", () => {
   it("skips a disabled route", () => {
     const config: SeedConfig = {
       ...baseConfig,
-      routes: [
-        { name: "off", match_repo: "*", target_channel: "feishu-a", enabled: false },
-      ],
+      routes: [{ name: "off", match_repo: "*", target_channel: "feishu-a", enabled: false }],
     };
     expect(matchRoute(config, event())).toBeNull();
   });
@@ -131,11 +127,18 @@ describe("matchRoute", () => {
     const config: SeedConfig = {
       ...baseConfig,
       routes: [
-        { name: "issues-no-label-churn", match_event: "issues", exclude_action: "labeled,unlabeled,assigned", target_channel: "feishu-a" },
+        {
+          name: "issues-no-label-churn",
+          match_event: "issues",
+          exclude_action: "labeled,unlabeled,assigned",
+          target_channel: "feishu-a",
+        },
       ],
     };
     // opened -> matches (not excluded)
-    expect(matchRoute(config, event({ event: "issues", action: "opened" }))?.route.name).toBe("issues-no-label-churn");
+    expect(matchRoute(config, event({ event: "issues", action: "opened" }))?.route.name).toBe(
+      "issues-no-label-churn",
+    );
     // labeled -> excluded
     expect(matchRoute(config, event({ event: "issues", action: "labeled" }))).toBeNull();
     expect(matchRoute(config, event({ event: "issues", action: "assigned" }))).toBeNull();
@@ -145,10 +148,18 @@ describe("matchRoute", () => {
     const config: SeedConfig = {
       ...baseConfig,
       routes: [
-        { name: "pr", match_event: "pull_request", match_action: "opened,closed,synchronize", exclude_action: "synchronize", target_channel: "feishu-a" },
+        {
+          name: "pr",
+          match_event: "pull_request",
+          match_action: "opened,closed,synchronize",
+          exclude_action: "synchronize",
+          target_channel: "feishu-a",
+        },
       ],
     };
-    expect(matchRoute(config, event({ event: "pull_request", action: "opened" }))?.route.name).toBe("pr");
+    expect(matchRoute(config, event({ event: "pull_request", action: "opened" }))?.route.name).toBe(
+      "pr",
+    );
     // synchronize is whitelisted by match_action but excluded -> dropped.
     expect(matchRoute(config, event({ event: "pull_request", action: "synchronize" }))).toBeNull();
   });
@@ -156,7 +167,14 @@ describe("matchRoute", () => {
   it("returns ignored for an event exclusion without an action", () => {
     const config: SeedConfig = {
       ...baseConfig,
-      routes: [{ name: "quiet", match_repo: "*", exclude_event: "create,delete", target_channel: "feishu-a" }],
+      routes: [
+        {
+          name: "quiet",
+          match_repo: "*",
+          exclude_event: "create,delete",
+          target_channel: "feishu-a",
+        },
+      ],
     };
     expect(resolveRoute(config, event({ event: "create" }))).toMatchObject({
       kind: "ignored",
@@ -167,7 +185,14 @@ describe("matchRoute", () => {
   it("returns ignored for an action exclusion", () => {
     const config: SeedConfig = {
       ...baseConfig,
-      routes: [{ name: "quiet-issues", match_event: "issues", exclude_action: "labeled", target_channel: "feishu-a" }],
+      routes: [
+        {
+          name: "quiet-issues",
+          match_event: "issues",
+          exclude_action: "labeled",
+          target_channel: "feishu-a",
+        },
+      ],
     };
     expect(resolveRoute(config, event({ event: "issues", action: "labeled" }))).toMatchObject({
       kind: "ignored",
@@ -177,7 +202,14 @@ describe("matchRoute", () => {
   it("lets exclude_event win inside a route's matching event domain", () => {
     const config: SeedConfig = {
       ...baseConfig,
-      routes: [{ name: "core", match_event: "push,issues", exclude_event: "issues", target_channel: "feishu-a" }],
+      routes: [
+        {
+          name: "core",
+          match_event: "push,issues",
+          exclude_event: "issues",
+          target_channel: "feishu-a",
+        },
+      ],
     };
     expect(resolveRoute(config, event({ event: "issues" }))).toMatchObject({ kind: "ignored" });
     expect(resolveRoute(config, event({ event: "push" }))).toMatchObject({ kind: "matched" });
@@ -187,8 +219,20 @@ describe("matchRoute", () => {
     const config: SeedConfig = {
       ...baseConfig,
       routes: [
-        { name: "quiet", match_repo: "*", exclude_event: "workflow_run", target_channel: "feishu-a", priority: 10 },
-        { name: "fallback", match_repo: "*", match_event: "workflow_run", target_channel: "feishu-b", priority: 100 },
+        {
+          name: "quiet",
+          match_repo: "*",
+          exclude_event: "workflow_run",
+          target_channel: "feishu-a",
+          priority: 10,
+        },
+        {
+          name: "fallback",
+          match_repo: "*",
+          match_event: "workflow_run",
+          target_channel: "feishu-b",
+          priority: 100,
+        },
       ],
     };
     expect(resolveRoute(config, event({ event: "workflow_run" }))).toMatchObject({

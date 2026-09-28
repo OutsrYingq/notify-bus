@@ -76,9 +76,7 @@ export function renderFormatted(
   const source = templateSource ?? "";
   const body =
     source.trim().length > 0
-      ? normaliseEntities(
-          Handlebars.compile(source, { noEscape: false })(message),
-        )
+      ? normaliseEntities(Handlebars.compile(source, { noEscape: false })(message))
       : "";
   return {
     ...message,

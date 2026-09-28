@@ -15,10 +15,7 @@
  */
 import type { EventMessage } from "../../types";
 
-export type Middleware = (
-  event: EventMessage,
-  next: () => Promise<void>,
-) => Promise<void> | void;
+export type Middleware = (event: EventMessage, next: () => Promise<void>) => Promise<void> | void;
 
 /**
  * Run an event through a chain of middlewares, in order.

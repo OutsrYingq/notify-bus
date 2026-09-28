@@ -9,6 +9,7 @@ notify-bus is a self-hostable, multi-channel notification bus. It ingests GitHub
 The codebase is **Bun + TypeScript**, organized as a **Bun workspace monorepo** (`packages/*`). One `package.json` at the root declares `workspaces: ["packages/*"]`; a single `bun install` installs every package. No turborepo — two packages with independent tasks don't need it.
 
 The product contract to be aware of:
+
 - **`ChannelAdapter` interface** (`packages/server/src/lib/adapters/types.ts`) — every channel implements it. Breaking it breaks every adapter.
 - **Pipeline / middleware interface** — the `(event, next) => void` shape. Changes ripple to every middleware.
 - **`EventMessage` type** (`packages/server/src/types.ts`) — the internal event representation everything else reads/writes.
@@ -81,8 +82,8 @@ TypeScript is the language; Bun runs it. These rules apply from day one.
 
 ## Security-critical rules (read these twice)
 
-1. **GitHub webhook signature = HMAC-SHA256 over the *raw request body*.** The raw bytes must be captured *before* any JSON parsing. Never `JSON.parse` then `JSON.stringify` and re-sign — byte ordering/whitespace diverges and verification fails. Compare with constant-time equality. See `packages/server/src/routes/webhook.ts` for the capture hook.
-2. **Feishu signing is counter-intuitive.** The HMAC *key* is `timestamp + "\n" + secret`, the *message* is empty, output is base64. The message body is never part of the signature. There is a known-good test vector — keep it green.
+1. **GitHub webhook signature = HMAC-SHA256 over the _raw request body_.** The raw bytes must be captured _before_ any JSON parsing. Never `JSON.parse` then `JSON.stringify` and re-sign — byte ordering/whitespace diverges and verification fails. Compare with constant-time equality. See `packages/server/src/routes/webhook.ts` for the capture hook.
+2. **Feishu signing is counter-intuitive.** The HMAC _key_ is `timestamp + "\n" + secret`, the _message_ is empty, output is base64. The message body is never part of the signature. There is a known-good test vector — keep it green.
 3. **`GITHUB_WEBHOOK_SECRET` lives only in an env var.** Never persist it to the DB, config file, or logs.
 4. **Channel credentials (webhook URLs, signing secrets) are stored in the config DB.** The admin API returns webhook URLs partially masked; full values are write-only over the API.
 5. **No auth in v1.** notify-bus assumes deployment behind a reverse proxy / private network. Treat `/api/*` as privileged.
@@ -106,15 +107,18 @@ TypeScript is the language; Bun runs it. These rules apply from day one.
 ## Boundaries
 
 **Do not modify these without explicit maintainer approval:**
+
 - `LICENSE` — license file. Changes are legal events, not code edits.
 - `package.json` top-level `license` field.
 - `.github/workflows/` release/publish steps (none yet — releases are CI-only when added).
 
 **Do not run:**
+
 - Any package-publish command (e.g. `bun publish`, `npm publish`) — releases are CI-only.
 - Anything that posts to a real Feishu group or a real GitHub webhook without approval.
 
 **Be careful with:**
+
 - Bumping dependencies — Elysia in particular has shipped breaking changes between minor versions and a CVE in the 1.4 line. Pin to the locked version; test before bumping.
 - Editing the `ChannelAdapter` interface or `EventMessage` type — they're public contracts to adapters and middlewares. Spec/design discussion first.
 

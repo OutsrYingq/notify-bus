@@ -14,12 +14,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "elysia": "1.4.29",
     "@elysiajs/static": "1.4.10",
+    "elysia": "1.4.29",
     "handlebars": "4.7.9",
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14"
+    "@types/bun": "1.4.2"
   }
 }

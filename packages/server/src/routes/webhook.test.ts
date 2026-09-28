@@ -8,7 +8,10 @@ import type { EventMessage } from "../types";
 const SECRET = "webhook-secret";
 
 /** A fake adapter that records what it received and returns a canned result. */
-function makeFakeAdapter(result: "success" | "fail"): { adapter: ChannelAdapter; calls: EventMessage[] } {
+function makeFakeAdapter(result: "success" | "fail"): {
+  adapter: ChannelAdapter;
+  calls: EventMessage[];
+} {
   const calls: EventMessage[] = [];
   const adapter: ChannelAdapter = {
     type: "feishu",
@@ -28,9 +31,7 @@ function makeFakeAdapter(result: "success" | "fail"): { adapter: ChannelAdapter;
 }
 
 const config: SeedConfig = {
-  channels: [
-    { name: "team", type: "feishu", webhook_url: "https://x", enabled: true },
-  ],
+  channels: [{ name: "team", type: "feishu", webhook_url: "https://x", enabled: true }],
   routes: [{ name: "all", match_repo: "*", target_channel: "team" }],
 };
 
@@ -196,7 +197,10 @@ describe("webhook route normalizes org-scoped events", () => {
     // Org-scoped payload: no top-level `repository`, has `organization`.
     const body = JSON.stringify({
       action: "member_added",
-      membership: { role: "member", user: { login: "newperson", html_url: "https://github.com/newperson" } },
+      membership: {
+        role: "member",
+        user: { login: "newperson", html_url: "https://github.com/newperson" },
+      },
       organization: { login: "lorelum", html_url: "https://github.com/lorelum" },
       sender: { login: "admin", avatar_url: "" },
     });
@@ -222,7 +226,11 @@ describe("webhook route with explicit exclusions", () => {
       channels: config.channels,
       routes: [{ name: "quiet", match_repo: "*", exclude_event: "create", target_channel: "team" }],
     };
-    const app = buildWebhookRoute({ config: quietConfig, adapters: new Map([["feishu", adapter]]), secret: SECRET });
+    const app = buildWebhookRoute({
+      config: quietConfig,
+      adapters: new Map([["feishu", adapter]]),
+      secret: SECRET,
+    });
     const body = JSON.stringify({
       repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
       sender: { login: "alice", avatar_url: "" },
@@ -234,7 +242,12 @@ describe("webhook route with explicit exclusions", () => {
       "x-hub-signature-256": sign(body, SECRET),
     });
     expect(status).toBe(200);
-    expect(json).toMatchObject({ status: "ignored", event: "create", route: "quiet", reason: "exclude_event" });
+    expect(json).toMatchObject({
+      status: "ignored",
+      event: "create",
+      route: "quiet",
+      reason: "exclude_event",
+    });
     expect(calls).toHaveLength(0);
   });
 });

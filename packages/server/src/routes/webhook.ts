@@ -92,86 +92,74 @@ export function buildWebhookRoute(deps: WebhookDeps) {
         return raw;
       });
     })
-    .post(
-      "/webhook",
-      async ({ store, headers, set }) => {
-        const eventType = headers["x-github-event"] ?? "ping";
+    .post("/webhook", async ({ store, headers, set }) => {
+      const eventType = headers["x-github-event"] ?? "ping";
 
-        // GitHub sends a `ping` when a webhook is first registered; ack it.
-        if (eventType === "ping") {
-          return { status: "ok", event: "ping" };
+      // GitHub sends a `ping` when a webhook is first registered; ack it.
+      if (eventType === "ping") {
+        return { status: "ok", event: "ping" };
+      }
+
+      const raw = (store as RawBodyStore).rawBody ?? "";
+      const signature = headers["x-hub-signature-256"] ?? "";
+
+      // Verify the signature (skip only when no secret is configured, e.g.
+      // local dev — production MUST set GITHUB_WEBHOOK_SECRET).
+      if (deps.secret) {
+        const ok = verifyGitHubSignature(new TextEncoder().encode(raw), signature, deps.secret);
+        if (!ok) {
+          set.status = 401;
+          return { status: "error", detail: "invalid signature" };
         }
+      }
 
-        const raw = (store as RawBodyStore).rawBody ?? "";
-        const signature = headers["x-hub-signature-256"] ?? "";
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        set.status = 400;
+        return { status: "error", detail: "invalid JSON body" };
+      }
 
-        // Verify the signature (skip only when no secret is configured, e.g.
-        // local dev — production MUST set GITHUB_WEBHOOK_SECRET).
-        if (deps.secret) {
-          const ok = verifyGitHubSignature(
-            new TextEncoder().encode(raw),
-            signature,
-            deps.secret,
-          );
-          if (!ok) {
-            set.status = 401;
-            return { status: "error", detail: "invalid signature" };
-          }
-        }
+      const deliveryId = headers["x-github-delivery"] ?? crypto.randomUUID();
+      const message = buildEventMessage(deliveryId, eventType, payload);
 
-        let payload: Record<string, unknown>;
-        try {
-          payload = JSON.parse(raw) as Record<string, unknown>;
-        } catch {
-          set.status = 400;
-          return { status: "error", detail: "invalid JSON body" };
-        }
+      if (!deps.config) {
+        return { status: "no_route", event: eventType, reason: "no config loaded" };
+      }
 
-        const deliveryId = headers["x-github-delivery"] ?? crypto.randomUUID();
-        const message = buildEventMessage(deliveryId, eventType, payload);
-
-        if (!deps.config) {
-          return { status: "no_route", event: eventType, reason: "no config loaded" };
-        }
-
-        const decision = resolveRoute(deps.config, message);
-        if (decision.kind === "no_route") {
-          return {
-            status: "no_route",
-            event: eventType,
-            repo: message.repository.full_name,
-          };
-        }
-        if (decision.kind === "ignored") {
-          return {
-            status: "ignored",
-            event: eventType,
-            repo: message.repository.full_name,
-            route: decision.ignored.route.name,
-            reason: decision.ignored.reason,
-          };
-        }
-        const matched = decision.match;
-
-        const template = findTemplate(deps.config, eventType)?.template;
-        const rendered = renderFormatted(message, template);
-
-        const channelId = (deps.config.channels ?? []).indexOf(matched.channel);
-        const result = await dispatch(
-          rendered,
-          matched.channel,
-          deps.adapters,
-          channelId,
-        );
-
+      const decision = resolveRoute(deps.config, message);
+      if (decision.kind === "no_route") {
         return {
-          status: result.status,
+          status: "no_route",
           event: eventType,
           repo: message.repository.full_name,
-          route: matched.route.name,
-          channel: matched.channel.name,
-          ...(result.status === "fail" ? { error: result.error } : {}),
         };
-      },
-    );
+      }
+      if (decision.kind === "ignored") {
+        return {
+          status: "ignored",
+          event: eventType,
+          repo: message.repository.full_name,
+          route: decision.ignored.route.name,
+          reason: decision.ignored.reason,
+        };
+      }
+      const matched = decision.match;
+
+      const template = findTemplate(deps.config, eventType)?.template;
+      const rendered = renderFormatted(message, template);
+
+      const channelId = (deps.config.channels ?? []).indexOf(matched.channel);
+      const result = await dispatch(rendered, matched.channel, deps.adapters, channelId);
+
+      return {
+        status: result.status,
+        event: eventType,
+        repo: message.repository.full_name,
+        route: matched.route.name,
+        channel: matched.channel.name,
+        ...(result.status === "fail" ? { error: result.error } : {}),
+      };
+    });
 }
