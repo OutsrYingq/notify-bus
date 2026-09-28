@@ -1,6 +1,13 @@
-node_modules/
-web/node_modules/
-web/dist/
+# The image installs its own dependencies; nothing from a local install belongs
+# in the build context.
+#
+# Patterns are relative to the context root, so `node_modules/` alone matches
+# only the top-level directory. The workspace packages each get their own, and
+# `COPY packages/web/ packages/web/` would copy them over the ones the image
+# just installed — after which `packages/web`'s `tsc -b` cannot resolve its JSX
+# types and the build fails. Same for build output.
+**/node_modules/
+**/dist/
 data/
 *.db
 *.db-wal
