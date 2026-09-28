@@ -145,4 +145,56 @@ describe("feishuAdapter.send", () => {
     expect(payload.timestamp).toBeUndefined();
     expect(payload.sign).toBeUndefined();
   });
+
+  it("posts the card's button targets unchanged (#26)", async () => {
+    // The card builders choose each button's `open_url.default_url`; this pins
+    // what actually goes over the wire for a comment event, whose only button
+    // must open that comment — not its parent commit, PR or repository.
+    let captured: { body: string } | null = null;
+    globalThis.fetch = mock((_input: string | URL, init?: RequestInit) => {
+      captured = { body: String(init?.body ?? "") };
+      return Promise.resolve(mockFetchResponse({ code: 0, msg: "success" }));
+    }) as unknown as typeof fetch;
+
+    const commentUrl = "https://github.com/org/repo/commit/abc1234#commitcomment-9";
+    const message: EventMessage = {
+      id: "evt-2",
+      event: "commit_comment",
+      action: "created",
+      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+      actor: { login: "alice", avatar_url: "" },
+      payload: { action: "created", comment: { html_url: commentUrl, body: "thanks" } },
+      metadata: {},
+      formatted: { title: "commit_comment", body: "" },
+    };
+
+    await feishuAdapter.send(message, { webhookUrl: WEBHOOK_URL });
+
+    const posted = JSON.parse(captured!.body) as {
+      card: { body: { elements: { tag?: string; behaviors?: { default_url?: string }[] }[] } };
+    };
+    const buttons = posted.card.body.elements.filter((el) => el.tag === "button");
+    expect(buttons.length).toBe(1);
+    expect(buttons[0]!.behaviors?.[0]?.default_url).toBe(commentUrl);
+  });
+
+  it("keeps the card header plain_text (#26)", async () => {
+    // Feishu's `lark_md` support for header.title / header.subtitle is limited
+    // to mentions and emoji — no markdown links, no `<a>` — so navigation must
+    // stay in the button elements. Pinned so a future change cannot switch the
+    // tags on the belief that header links work.
+    let captured: { body: string } | null = null;
+    globalThis.fetch = mock((_input: string | URL, init?: RequestInit) => {
+      captured = { body: String(init?.body ?? "") };
+      return Promise.resolve(mockFetchResponse({ code: 0, msg: "success" }));
+    }) as unknown as typeof fetch;
+
+    await feishuAdapter.send(buildMessage(), { webhookUrl: WEBHOOK_URL });
+
+    const posted = JSON.parse(captured!.body) as {
+      card: { header: { title: { tag: string }; subtitle?: { tag: string } } };
+    };
+    expect(posted.card.header.title.tag).toBe("plain_text");
+    expect(posted.card.header.subtitle?.tag).toBe("plain_text");
+  });
 });

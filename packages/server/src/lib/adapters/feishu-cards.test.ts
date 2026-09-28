@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { buildCard } from "./feishu-cards";
 import { renderFormatted } from "../render";
-import { findTemplate, loadSeedConfig } from "../config";
+import { findTemplate, loadSeedConfig, resolveRoute } from "../config";
 import type { EventMessage } from "../../types";
 
 /** Minimal EventMessage with a raw GitHub-shaped payload + optional formatted body. */
@@ -25,27 +25,68 @@ function msg(
   };
 }
 
+/**
+ * The same message with no repository url — what an org-scoped or partial
+ * payload resolves to (webhook.ts falls back to "" when neither the repository
+ * nor the organization carries one). `msg()` always supplies a url, so the
+ * missing-url cases need their own constructor.
+ */
+function msgWithoutRepoUrl(
+  event: string,
+  payload: Record<string, unknown>,
+  action?: string,
+): EventMessage {
+  return {
+    ...msg(event, payload, { action }),
+    repository: { full_name: "org/repo", html_url: "" },
+  };
+}
+
 /** `n` GitHub-shaped labels, for the label-rendering tests. */
 function someLabels(n: number): { name: string }[] {
   return Array.from({ length: n }, (_, i) => ({ name: `label-${i}` }));
 }
 
-/** Recursively collect button open_url destinations from elements + columns. */
-function findButtonUrls(elements: unknown[]): string[] {
-  const urls: string[] = [];
+/**
+ * Every button with its raw destination and style, recursing into column_set
+ * columns.
+ *
+ * A button whose `default_url` is empty is kept (`url: ""`) rather than
+ * dropped: a dead button opens nothing when clicked, so a helper that filtered
+ * empty targets out could not tell it apart from no button at all.
+ */
+function findRawButtons(
+  elements: unknown[],
+): { label: string; url: string; type: string }[] {
+  const buttons: { label: string; url: string; type: string }[] = [];
   for (const el of elements) {
     const tag = (el as { tag?: string }).tag;
     if (tag === "button") {
+      const label = (el as { text?: { content?: string } }).text?.content ?? "";
+      const type = (el as { type?: string }).type ?? "";
       const behaviors = (el as { behaviors?: { default_url?: string }[] }).behaviors ?? [];
-      for (const b of behaviors) if (b.default_url) urls.push(b.default_url);
+      if (behaviors.length === 0) buttons.push({ label, url: "", type });
+      for (const b of behaviors) buttons.push({ label, url: b.default_url ?? "", type });
     }
     if (tag === "column_set") {
       for (const col of (el as { columns?: { elements?: unknown[] }[] }).columns ?? []) {
-        urls.push(...findButtonUrls((col.elements ?? []) as unknown[]));
+        buttons.push(...findRawButtons((col.elements ?? []) as unknown[]));
       }
     }
   }
-  return urls;
+  return buttons;
+}
+
+/** Buttons that actually open something. */
+function findButtons(elements: unknown[]): { label: string; url: string }[] {
+  return findRawButtons(elements)
+    .filter((button) => button.url.length > 0)
+    .map(({ label, url }) => ({ label, url }));
+}
+
+/** Recursively collect button open_url destinations from elements + columns. */
+function findButtonUrls(elements: unknown[]): string[] {
+  return findButtons(elements).map((button) => button.url);
 }
 
 /** Stringify a card's elements (recursing into column_set columns) so we can
@@ -592,7 +633,7 @@ describe("buildCard · fallback", () => {
       metadata: {},
     };
     const card = buildCard(emptyUrlMsg);
-    expect(findButtonUrls(card.elements).length).toBe(0);
+    expect(findRawButtons(card.elements)).toEqual([]);
   });
 
   it("labels View Repo (not View Org) for a repo event whose repo belongs to an org (#13)", () => {
@@ -1076,5 +1117,354 @@ describe("buildCard · fork button (#17)", () => {
     expect(findButtonUrls(card.elements)).toEqual(["https://github.com/org/repo"]);
     const button = card.elements.find((el) => (el as { tag?: string }).tag === "button");
     expect((button as { text?: { content?: string } }).text?.content).toBe("View Repo");
+  });
+});
+
+describe("buildCard · navigation buttons (#26)", () => {
+  /** Buttons of a card built through the production path, in render order. */
+  const buttonsOf = (
+    event: string,
+    payload: Record<string, unknown>,
+    action?: string,
+  ): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
+
+  /**
+   * One GitHub-shaped fixture per builder, keyed by event so a test names the
+   * card it means rather than an array position that shifts when one is added.
+   *
+   * Every target a card can offer gets its own URL, so a button that quietly
+   * opens the wrong one shows up as a label/URL mismatch rather than a
+   * coincidence.
+   */
+  const REPO_URL = "https://github.com/org/repo";
+  const FIXTURES: Record<
+    string,
+    { payload: Record<string, unknown>; action?: string }
+  > = {
+    push: {
+      payload: {
+        ref: "refs/heads/main",
+        compare: "https://github.com/org/repo/compare/aaa...bbb",
+        commits: [{ id: "abc1234567", message: "one" }],
+      },
+    },
+    pull_request: {
+      payload: {
+        action: "opened",
+        number: 7,
+        pull_request: {
+          title: "Add login",
+          html_url: "https://github.com/org/repo/pull/7",
+          user: { login: "bob" },
+        },
+      },
+      action: "opened",
+    },
+    issues: {
+      payload: {
+        action: "opened",
+        issue: {
+          number: 8,
+          title: "Bug",
+          html_url: "https://github.com/org/repo/issues/8",
+          user: { login: "carol" },
+        },
+      },
+      action: "opened",
+    },
+    release: {
+      payload: {
+        action: "published",
+        release: {
+          name: "v1.0.0",
+          tag_name: "v1.0.0",
+          html_url: "https://github.com/org/repo/releases/tag/v1.0.0",
+          author: { login: "dave" },
+        },
+      },
+      action: "published",
+    },
+    star: { payload: { action: "created" }, action: "created" },
+    fork: {
+      payload: { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } },
+    },
+    deployment: {
+      payload: {
+        deployment: { id: 1 },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+    },
+  };
+
+  /** Label + style of each button a card renders, for the weight assertions. */
+  const stylesOf = (
+    event: string,
+    payload: Record<string, unknown>,
+    action?: string,
+  ): string[] =>
+    findRawButtons(prodCard(event, payload, action).elements).map(
+      (button) => `${button.label}:${button.type}`,
+    );
+
+  /** Buttons of the canonical fixture for `event`, in render order. */
+  const fixtureButtons = (event: string): { label: string; url: string }[] => {
+    const fixture = FIXTURES[event];
+    if (!fixture) throw new Error(`no fixture for ${event}`);
+    return buttonsOf(event, fixture.payload, fixture.action);
+  };
+
+  /** Button labels + styles of the canonical fixture for `event`. */
+  const fixtureStyles = (event: string): string[] => {
+    const fixture = FIXTURES[event];
+    if (!fixture) throw new Error(`no fixture for ${event}`);
+    return stylesOf(event, fixture.payload, fixture.action);
+  };
+
+  it("keeps every card within three buttons, each with a unique non-empty target", () => {
+    for (const [event, fixture] of Object.entries(FIXTURES)) {
+      const card = prodCard(event, fixture.payload, fixture.action);
+      const raw = findRawButtons(card.elements);
+      const buttons = findButtons(card.elements);
+      expect([event, buttons.length <= 3]).toEqual([event, true]);
+      // No dead button: every button element carries a destination.
+      expect([event, raw.length]).toEqual([event, buttons.length]);
+      expect([event, buttons.every((b) => b.url.length > 0)]).toEqual([event, true]);
+      // No two buttons open the same target.
+      expect([event, new Set(buttons.map((b) => b.url)).size]).toEqual([
+        event,
+        buttons.length,
+      ]);
+    }
+  });
+
+  it("renders the repository as secondary navigation, never primary", () => {
+    // The card's own object is the primary action; the repository button is
+    // secondary, matching the `star` and fallback cards that compose their own
+    // `default` repo button. A card left with only "View Repo" — its object URL
+    // missing — used to render that button `primary` (#26 review).
+    expect(fixtureStyles("issues")).toEqual(["View Issue:primary", "View Repo:default"]);
+    expect(fixtureStyles("push")).toEqual(["Compare changes:primary", "View Repo:default"]);
+    expect(fixtureStyles("star")).toEqual(["View Repo:default"]);
+    expect(fixtureStyles("deployment")).toEqual(["View Repo:default"]);
+    // Still secondary when it is the only button left.
+    expect(
+      stylesOf("issues", { action: "opened", issue: { number: 8, title: "Bug" } }, "opened"),
+    ).toEqual(["View Repo:default"]);
+    expect(
+      stylesOf("push", { ref: "refs/heads/old", deleted: true, commits: [], head_commit: null }),
+    ).toEqual(["View Repo:default"]);
+  });
+
+  it("push adds the repository button next to the compare link", () => {
+    // The commit list links to individual commits, so before #26 nothing on this
+    // card reached the repository: the only mention was the plain-text subtitle.
+    expect(fixtureButtons("push")).toEqual([
+      { label: "Compare changes", url: "https://github.com/org/repo/compare/aaa...bbb" },
+      { label: "View Repo", url: REPO_URL },
+    ]);
+  });
+
+  it("push on a deleted branch keeps the repo button and drops the compare link", () => {
+    const buttons = buttonsOf("push", {
+      ref: "refs/heads/old",
+      deleted: true,
+      compare: "https://github.com/org/repo/compare/aaa...000",
+      commits: [],
+      head_commit: null,
+    });
+    expect(buttons).toEqual([{ label: "View Repo", url: REPO_URL }]);
+  });
+
+  it("pull_request points View PR, View files and View Repo at three distinct targets", () => {
+    expect(fixtureButtons("pull_request")).toEqual([
+      { label: "View PR", url: "https://github.com/org/repo/pull/7" },
+      { label: "View files", url: "https://github.com/org/repo/pull/7/files" },
+      { label: "View Repo", url: REPO_URL },
+    ]);
+  });
+
+  it("issues points View Issue and View Repo at two distinct targets", () => {
+    expect(fixtureButtons("issues")).toEqual([
+      { label: "View Issue", url: "https://github.com/org/repo/issues/8" },
+      { label: "View Repo", url: REPO_URL },
+    ]);
+  });
+
+  it("release points View Release and View Repo at two distinct targets", () => {
+    expect(fixtureButtons("release")).toEqual([
+      { label: "View Release", url: "https://github.com/org/repo/releases/tag/v1.0.0" },
+      { label: "View Repo", url: REPO_URL },
+    ]);
+  });
+
+  it("star keeps its single View Repo — no duplicate is added", () => {
+    expect(buttonsOf("star", { action: "created" }, "created")).toEqual([
+      { label: "View Repo", url: REPO_URL },
+    ]);
+  });
+
+  it("fork keeps its single fork button — no View Repo is added", () => {
+    expect(
+      buttonsOf("fork", { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } }),
+    ).toEqual([{ label: "View Fork", url: "https://github.com/eve/repo" }]);
+  });
+
+  it("fallback keeps the single button resolvePrimaryLink chose", () => {
+    expect(
+      buttonsOf("deployment", {
+        deployment: { id: 1 },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      }),
+    ).toEqual([{ label: "View Repo", url: REPO_URL }]);
+  });
+
+  it("drops View PR instead of opening the repository under that label", () => {
+    // The old `?? repoUrl` fallback made "View PR" open the repo and "View files"
+    // a `<repo url>/files` that does not exist.
+    const buttons = buttonsOf(
+      "pull_request",
+      { action: "opened", number: 7, pull_request: { title: "Add login", user: { login: "bob" } } },
+      "opened",
+    );
+    expect(buttons).toEqual([{ label: "View Repo", url: REPO_URL }]);
+  });
+
+  it("drops View Issue instead of opening the repository under that label", () => {
+    const buttons = buttonsOf(
+      "issues",
+      { action: "opened", issue: { number: 8, title: "Bug", user: { login: "carol" } } },
+      "opened",
+    );
+    expect(buttons).toEqual([{ label: "View Repo", url: REPO_URL }]);
+  });
+
+  it("drops View Release instead of opening the repository under that label", () => {
+    const buttons = buttonsOf(
+      "release",
+      { action: "published", release: { name: "v1.0.0", tag_name: "v1.0.0", author: { login: "d" } } },
+      "published",
+    );
+    expect(buttons).toEqual([{ label: "View Repo", url: REPO_URL }]);
+  });
+
+  it("emits no navigation at all when the repository has no url", () => {
+    // Org-scoped payloads resolve to an empty repository.html_url; a "View Repo"
+    // there would be a dead link. Asserted on the raw buttons so a button with
+    // an empty target cannot pass as "no button".
+    const noUrls = msgWithoutRepoUrl(
+      "issues",
+      { action: "opened", issue: { number: 8, title: "Bug", user: { login: "carol" } } },
+      "opened",
+    );
+    expect(findRawButtons(buildCard(noUrls).elements)).toEqual([]);
+
+    // The object button survives on its own URL; only the repo button is gone.
+    const withIssueUrl = msgWithoutRepoUrl(
+      "issues",
+      {
+        action: "opened",
+        issue: { number: 8, title: "Bug", html_url: "https://github.com/org/repo/issues/8", user: { login: "c" } },
+      },
+      "opened",
+    );
+    expect(findRawButtons(buildCard(withIssueUrl).elements)).toEqual([
+      {
+        label: "View Issue",
+        url: "https://github.com/org/repo/issues/8",
+        type: "primary",
+      },
+    ]);
+  });
+
+  it("pull_request_review_comment sends View Comment to the comment itself", () => {
+    // The parent PR url and the repo url are both in the payload and both
+    // differ from the comment url, so opening any of them fails this assertion.
+    const buttons = buttonsOf(
+      "pull_request_review_comment",
+      {
+        action: "created",
+        comment: {
+          html_url: "https://github.com/org/repo/pull/7#discussion_r123",
+          body: "nit: rename this",
+        },
+        pull_request: { html_url: "https://github.com/org/repo/pull/7" },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+      "created",
+    );
+    expect(buttons).toEqual([
+      { label: "View Comment", url: "https://github.com/org/repo/pull/7#discussion_r123" },
+    ]);
+  });
+
+  it("commit_comment sends View Comment to the comment itself", () => {
+    const buttons = buttonsOf(
+      "commit_comment",
+      {
+        action: "created",
+        comment: {
+          html_url: "https://github.com/org/repo/commit/abc1234#commitcomment-9",
+          body: "thanks",
+          commit_id: "abc1234",
+        },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+      "created",
+    );
+    expect(buttons).toEqual([
+      { label: "View Comment", url: "https://github.com/org/repo/commit/abc1234#commitcomment-9" },
+    ]);
+  });
+
+  it("emits no View Comment when the payload carries no comment url", () => {
+    // Degrades to the repository (the correct label for that target) rather than
+    // faking a link to a comment it cannot address.
+    const buttons = buttonsOf(
+      "commit_comment",
+      {
+        action: "created",
+        comment: { body: "thanks", commit_id: "abc1234" },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      },
+      "created",
+    );
+    expect(buttons).toEqual([{ label: "View Repo", url: REPO_URL }]);
+  });
+
+  it("still renders both comment events through the fallback, not a dedicated card", () => {
+    // #26 explicitly keeps pull_request_review_comment / commit_comment on the
+    // fallback; the grey header is that builder's signature.
+    for (const event of ["pull_request_review_comment", "commit_comment"]) {
+      const payload = {
+        action: "created",
+        comment: { html_url: "https://github.com/org/repo/issues/1#issuecomment-2", body: "hi" },
+        repository: { full_name: "org/repo", html_url: REPO_URL },
+      };
+      expect([event, prodCard(event, payload, "created").header.template]).toEqual([
+        event,
+        "grey",
+      ]);
+    }
+  });
+
+  it("does not deliver either comment event under the shipped config", () => {
+    // Asserted through the router rather than by reading the `match_event`
+    // strings: a route that omits `match_event` matches every event, so a
+    // catch-all route added to config.example.yaml later would deliver these
+    // while a whitelist-string check still passed. (#26 review)
+    const config = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
+    if (!config) throw new Error("config.example.yaml did not load");
+    for (const event of ["pull_request_review_comment", "commit_comment"]) {
+      const message = msg(
+        event,
+        {
+          action: "created",
+          comment: { html_url: "https://github.com/org/repo/issues/1#issuecomment-2", body: "hi" },
+          repository: { full_name: "org/repo", html_url: REPO_URL },
+        },
+        { action: "created" },
+      );
+      expect([event, resolveRoute(config, message).kind]).toEqual([event, "no_route"]);
+    }
   });
 });
