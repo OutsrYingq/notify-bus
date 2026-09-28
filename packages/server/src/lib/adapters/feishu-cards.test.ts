@@ -3,141 +3,76 @@ import { buildCard } from "./feishu-cards";
 import { renderFormatted } from "../render";
 import { findTemplate, loadSeedConfig, resolveRoute } from "../config";
 import type { EventMessage } from "../../types";
-
-/** Minimal EventMessage with a raw GitHub-shaped payload + optional formatted body. */
-function msg(
-  event: string,
-  payload: Record<string, unknown>,
-  opts: { action?: string; formattedBody?: string; ref?: string } = {},
-): EventMessage {
-  return {
-    id: "evt-1",
-    event,
-    action: opts.action,
-    ref: opts.ref,
-    repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    actor: { login: "alice", avatar_url: "https://gh/alice.png" },
-    payload,
-    metadata: {},
-    formatted: opts.formattedBody
-      ? { title: "t", body: opts.formattedBody }
-      : undefined,
-  };
-}
-
-/**
- * The same message with no repository url — what an org-scoped or partial
- * payload resolves to (webhook.ts falls back to "" when neither the repository
- * nor the organization carries one). `msg()` always supplies a url, so the
- * missing-url cases need their own constructor.
- */
-function msgWithoutRepoUrl(
-  event: string,
-  payload: Record<string, unknown>,
-  action?: string,
-): EventMessage {
-  return {
-    ...msg(event, payload, { action }),
-    repository: { full_name: "org/repo", html_url: "" },
-  };
-}
+import {
+  cardText,
+  elementMarkdown,
+  findButtons,
+  findButtonUrls,
+  findRawButtons,
+  msg,
+  msgWithoutRepoUrl,
+  prodCard,
+} from "./feishu-card-test-helpers";
 
 /** `n` GitHub-shaped labels, for the label-rendering tests. */
 function someLabels(n: number): { name: string }[] {
   return Array.from({ length: n }, (_, i) => ({ name: `label-${i}` }));
 }
 
-/**
- * Every button with its raw destination and style, recursing into column_set
- * columns.
- *
- * A button whose `default_url` is empty is kept (`url: ""`) rather than
- * dropped: a dead button opens nothing when clicked, so a helper that filtered
- * empty targets out could not tell it apart from no button at all.
- */
-function findRawButtons(
-  elements: unknown[],
-): { label: string; url: string; type: string }[] {
-  const buttons: { label: string; url: string; type: string }[] = [];
-  for (const el of elements) {
-    const tag = (el as { tag?: string }).tag;
-    if (tag === "button") {
-      const label = (el as { text?: { content?: string } }).text?.content ?? "";
-      const type = (el as { type?: string }).type ?? "";
-      const behaviors = (el as { behaviors?: { default_url?: string }[] }).behaviors ?? [];
-      if (behaviors.length === 0) buttons.push({ label, url: "", type });
-      for (const b of behaviors) buttons.push({ label, url: b.default_url ?? "", type });
-    }
-    if (tag === "column_set") {
-      for (const col of (el as { columns?: { elements?: unknown[] }[] }).columns ?? []) {
-        buttons.push(...findRawButtons((col.elements ?? []) as unknown[]));
-      }
-    }
+// ─── helpers the describes below share ─────────────────────────────────────
+//
+// These sit at module scope rather than inside the `describe` that uses them
+// because none of them reads a binding from its enclosing block — and oxlint's
+// `consistent-function-scoping` reports a nested function that reaches only for
+// imports (a same-file declaration counts as a capture, an import does not).
+// The helpers that *do* capture their describe's fixtures stay where they are.
+
+/** A PR card for `action`, with optional extra `pull_request` fields. */
+const prCard = (action: string, extra: Record<string, unknown> = {}) =>
+  buildCard(
+    msg(
+      "pull_request",
+      { action, number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra } },
+      { action },
+    ),
+  );
+
+/** Resolve an action's badge colour through the card that actually emits it. */
+function badgeColor(event: string, action: string): string | undefined {
+  const payload: Record<string, unknown> = { action, number: 1 };
+  if (event === "pull_request") {
+    payload.pull_request = { title: "t", html_url: "u", user: { login: "x" } };
   }
-  return buttons;
+  return buildCard(msg(event, payload, { action })).header.badges?.[0]?.color;
 }
 
-/** Buttons that actually open something. */
-function findButtons(elements: unknown[]): { label: string; url: string }[] {
-  return findRawButtons(elements)
-    .filter((button) => button.url.length > 0)
-    .map(({ label, url }) => ({ label, url }));
-}
+/** All markdown text in the card, concatenated. */
+const textOf = (message: EventMessage): string => elementMarkdown(buildCard(message).elements);
 
-/** Recursively collect button open_url destinations from elements + columns. */
-function findButtonUrls(elements: unknown[]): string[] {
-  return findButtons(elements).map((button) => button.url);
-}
+/** A one-commit push whose commit message is `commitMessage`. */
+const pushWith = (commitMessage: string, opts: { ref?: string; author?: string } = {}): EventMessage =>
+  msg("push", {
+    ref: opts.ref ?? "refs/heads/main",
+    total_commits: 1,
+    commits: [{ id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } }],
+  }, { ref: opts.ref ?? "refs/heads/main" });
 
-/** Stringify a card's elements (recursing into column_set columns) so we can
- * grep for inline markup like <font> and <text_tag>. */
-function elementMarkdown(elements: unknown[]): string {
-  const out: string[] = [];
-  const walk = (els: unknown[]): void => {
-    for (const el of els) {
-      const tag = (el as { tag?: string }).tag;
-      if (tag === "markdown") {
-        const content = (el as { content?: string }).content;
-        if (typeof content === "string") out.push(content);
-      } else if (tag === "div") {
-        const text = (el as { text?: { content?: string } }).text;
-        if (text?.content) out.push(text.content);
-        for (const f of (el as { fields?: { text?: { content?: string } }[] }).fields ?? []) {
-          if (f.text?.content) out.push(f.text.content);
-        }
-      } else if (tag === "column_set") {
-        for (const col of (el as { columns?: { elements?: unknown[] }[] }).columns ?? []) {
-          walk((col.elements ?? []) as unknown[]);
-        }
-      }
-    }
-  };
-  walk(elements);
-  return out.join("\n");
-}
-
-/**
- * Build a card through the real production path — template render, then card
- * assembly. Tests that read payload fields go through here: calling
- * `buildCard()` directly cannot see the template/composition layer, which is
- * where #16's bug lived and what #17 asked the tests to cover.
- */
-function prodCard(
+/** Buttons of a card built through the production path, in render order. */
+const buttonsOf = (
   event: string,
   payload: Record<string, unknown>,
   action?: string,
-): ReturnType<typeof buildCard> {
-  return buildCard(renderFormatted(msg(event, payload, { action }), undefined));
-}
+): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
 
-/** All markdown text of a card built through the production path. */
-function cardText(
+/** Label + style of each button a card renders, for the weight assertions. */
+const stylesOf = (
   event: string,
   payload: Record<string, unknown>,
   action?: string,
-): string {
-  return elementMarkdown(prodCard(event, payload, action).elements);
-}
+): string[] =>
+  findRawButtons(prodCard(event, payload, action).elements).map(
+    (button) => `${button.label}:${button.type}`,
+  );
 
 describe("buildCard · push", () => {
   const card = buildCard(
@@ -366,15 +301,6 @@ describe("buildCard · pull_request", () => {
 });
 
 describe("buildCard · pull_request header reflects the action (#15)", () => {
-  const prCard = (action: string, extra: Record<string, unknown> = {}) =>
-    buildCard(
-      msg(
-        "pull_request",
-        { action, number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra } },
-        { action },
-      ),
-    );
-
   it("keeps an open PR purple", () => {
     expect(prCard("opened").header.template).toBe("purple");
   });
@@ -392,15 +318,6 @@ describe("buildCard · pull_request header reflects the action (#15)", () => {
 });
 
 describe("buildCard · action badge palette (#15)", () => {
-  /** Resolve an action's badge colour through the card that actually emits it. */
-  function badgeColor(event: string, action: string): string | undefined {
-    const payload: Record<string, unknown> = { action, number: 1 };
-    if (event === "pull_request") {
-      payload.pull_request = { title: "t", html_url: "u", user: { login: "x" } };
-    }
-    return buildCard(msg(event, payload, { action })).header.badges?.[0]?.color;
-  }
-
   it("applies the palette on the fallback card, not only the dedicated builders", () => {
     // Events without a dedicated builder go through buildFallbackCard, which
     // used to hardcode a neutral badge — silently disabling the palette for the
@@ -594,241 +511,6 @@ describe("buildCard · star / fork", () => {
   });
 });
 
-describe("buildCard · issue_comment (#21)", () => {
-  const COMMENT_URL = "https://github.com/org/repo/issues/42#issuecomment-1";
-  const ISSUE_URL = "https://github.com/org/repo/issues/42";
-
-  /**
-   * A GitHub-shaped `issue_comment` payload: the comment, its parent issue, and
-   * the repository. `overrides.comment` / `overrides.issue` are merged one
-   * level deep so a test can drop or replace a single field.
-   */
-  const fixture = (
-    action: string,
-    overrides: {
-      comment?: Record<string, unknown>;
-      issue?: Record<string, unknown>;
-    } = {},
-  ): Record<string, unknown> => ({
-    action,
-    issue: {
-      number: 42,
-      title: "Login broken",
-      html_url: ISSUE_URL,
-      user: { login: "carol" },
-      ...overrides.issue,
-    },
-    comment: {
-      body: "I can reproduce on Safari",
-      html_url: COMMENT_URL,
-      user: { login: "carol", html_url: "https://github.com/carol" },
-      ...overrides.comment,
-    },
-    repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-  });
-
-  it("shows the comment, its author and the parent issue", () => {
-    const card = prodCard("issue_comment", fixture("created"), "created");
-    const text = elementMarkdown(card.elements);
-    expect(text).toContain("Login broken");
-    expect(text).toContain("> I can reproduce on Safari");
-    expect(text).toContain("carol");
-    // The issue is identified in the header, so the body carries its title only.
-    expect(card.header.title).toContain("#42");
-  });
-
-  it("sends View Comment to the comment itself", () => {
-    const card = prodCard("issue_comment", fixture("created"), "created");
-    expect(findButtons(card.elements)).toEqual([
-      { label: "View Comment", url: COMMENT_URL },
-      { label: "View Repo", url: "https://github.com/org/repo" },
-    ]);
-  });
-
-  it("falls back to the parent issue when the comment carries no url", () => {
-    const card = prodCard(
-      "issue_comment",
-      fixture("created", { comment: { html_url: undefined } }),
-      "created",
-    );
-    // The label has to follow the target (#26): this button opens the issue.
-    expect(findButtons(card.elements)).toEqual([
-      { label: "View Issue", url: ISSUE_URL },
-      { label: "View Repo", url: "https://github.com/org/repo" },
-    ]);
-  });
-
-  it("emits no button when neither the comment nor its parent has a url", () => {
-    const noUrls = msgWithoutRepoUrl(
-      "issue_comment",
-      fixture("created", { comment: { html_url: undefined }, issue: { html_url: undefined } }),
-      "created",
-    );
-    // Raw buttons, so a button with an empty target cannot pass as "no button".
-    expect(findRawButtons(buildCard(noUrls).elements)).toEqual([]);
-  });
-
-  it("distinguishes created, edited and deleted", () => {
-    const look = (action: string) => {
-      const card = prodCard("issue_comment", fixture(action), action);
-      return `${card.header.template}/${card.header.badges?.[0]?.color}`;
-    };
-    expect(look("created")).toBe("blue/wathet");
-    expect(look("edited")).toBe("grey/neutral");
-    expect(look("deleted")).toBe("red/red");
-  });
-
-  it("names the comment's author rather than the actor", () => {
-    // The fixture's actor is `alice` (see msg()) and the comment's author is
-    // carol. The fallback rendered `message.actor`, which on `edited` is the
-    // editor — the bug this card exists to fix.
-    const text = cardText("issue_comment", fixture("edited"), "edited");
-    expect(text).toContain("carol");
-  });
-
-  it("adds the editor beside the author when somebody else edits the comment", () => {
-    const text = cardText("issue_comment", fixture("edited"), "edited");
-    expect(text).toContain("carol"); // still the author
-    expect(text).toContain("alice"); // the editor, on its own line
-    expect(text).toContain("edited by");
-  });
-
-  it("does not announce an edit when the author edits their own comment", () => {
-    const text = cardText(
-      "issue_comment",
-      fixture("edited", { comment: { user: { login: "alice" } } }),
-      "edited",
-    );
-    expect(text).toContain("alice");
-    expect(text).not.toContain("edited by");
-  });
-
-  it("says unknown — not the actor — when the payload names no author", () => {
-    const text = cardText("issue_comment", fixture("created", { comment: { user: null } }), "created");
-    expect(text).toContain("unknown");
-    expect(text).not.toContain("alice");
-  });
-
-  it("keeps its own content when a template is configured", () => {
-    const message = msg("issue_comment", fixture("created"), { action: "created" });
-    const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
-    expect(text).toContain("Login broken");
-    expect(text).toContain("I can reproduce on Safari");
-    expect(text).toContain("Deploying now");
-  });
-});
-
-describe("buildCard · repository (#21)", () => {
-  const REPO_URL = "https://github.com/org/repo";
-
-  /** A GitHub-shaped `repository` payload; `extra` adds to the repository object. */
-  const fixture = (
-    action: string,
-    extra: Record<string, unknown> = {},
-  ): Record<string, unknown> => ({
-    action,
-    repository: {
-      name: "repo",
-      full_name: "org/repo",
-      html_url: REPO_URL,
-      ...extra,
-    },
-    organization: { login: "org" },
-  });
-
-  it("is the quiet grey baseline for an ordinary edit", () => {
-    const card = prodCard("repository", fixture("edited"), "edited");
-    expect(card.header.template).toBe("grey");
-    expect(card.header.badges).toEqual([{ text: "edited", color: "neutral" }]);
-  });
-
-  it("makes deleted and archived visibly different from an ordinary edit", () => {
-    const template = (action: string) =>
-      prodCard("repository", fixture(action), action).header.template;
-    expect(template("deleted")).toBe("red");
-    expect(template("archived")).toBe("yellow");
-    expect(template("archived")).not.toBe(template("edited"));
-    expect(template("deleted")).not.toBe(template("edited"));
-  });
-
-  it("shows the previous name on a rename, and no line at all without one", () => {
-    const renamed = prodCard("repository", {
-      ...fixture("renamed"),
-      changes: { repository: { name: { from: "old-name" } } },
-    }, "renamed");
-    expect(elementMarkdown(renamed.elements)).toContain("old-name");
-
-    // A payload without the `changes` path degrades to no line (#21) — never to
-    // "formerly undefined".
-    const partial = prodCard("repository", fixture("renamed"), "renamed");
-    expect(elementMarkdown(partial.elements)).not.toContain("undefined");
-  });
-
-  it("shows the previous owner on a transfer, and no line at all without one", () => {
-    const transferred = prodCard("repository", {
-      ...fixture("transferred"),
-      changes: { owner: { from: { user: { login: "old-owner" } } } },
-    }, "transferred");
-    expect(elementMarkdown(transferred.elements)).toContain("old-owner");
-
-    const partial = prodCard("repository", fixture("transferred"), "transferred");
-    expect(elementMarkdown(partial.elements)).not.toContain("undefined");
-  });
-
-  it("reads visibility from repository.private, never from repository.visibility", () => {
-    // GitHub sends BOTH fields on a `privatized` payload, and `visibility` can
-    // still hold the previous value — the fixtures make them disagree, so only
-    // `private` can produce the right answer (#21).
-    const privatized = prodCard(
-      "repository",
-      fixture("privatized", { private: true, visibility: "public" }),
-      "privatized",
-    );
-    expect(elementMarkdown(privatized.elements)).toContain("private");
-    expect(elementMarkdown(privatized.elements)).not.toContain("public");
-
-    // The complement, so a card that simply echoed `private` verbatim could not
-    // pass both: `visibility` says private while `private` says otherwise.
-    const publicized = prodCard(
-      "repository",
-      fixture("publicized", { private: false, visibility: "private" }),
-      "publicized",
-    );
-    expect(elementMarkdown(publicized.elements)).toContain("public");
-    expect(elementMarkdown(publicized.elements)).not.toContain("private");
-  });
-
-  it("links the repository as its single default button", () => {
-    const card = prodCard("repository", fixture("renamed"), "renamed");
-    expect(findRawButtons(card.elements)).toEqual([
-      { label: "View Repo", url: REPO_URL, type: "default" },
-    ]);
-  });
-
-  it("emits no button when the repository has no url", () => {
-    const noUrl = msgWithoutRepoUrl("repository", fixture("deleted"), "deleted");
-    expect(findRawButtons(buildCard(noUrl).elements)).toEqual([]);
-  });
-
-  it("names the sender, since a repository event is not about a person", () => {
-    const text = cardText("repository", fixture("edited"), "edited");
-    expect(text).toContain("alice");
-    expect(text).not.toContain("unknown");
-  });
-
-  it("appends a configured template beside the change it describes", () => {
-    const message = msg("repository", {
-      ...fixture("renamed"),
-      changes: { repository: { name: { from: "old-name" } } },
-    }, { action: "renamed" });
-    const text = elementMarkdown(
-      buildCard(renderFormatted(message, "Please update your remotes")).elements,
-    );
-    expect(text).toContain("old-name");
-    expect(text).toContain("Please update your remotes");
-  });
-});
-
 describe("buildCard · fallback", () => {
   it("renders a grey card for an unknown event with an action badge", () => {
     const card = buildCard(msg("deployment", { environment: "prod" }));
@@ -945,16 +627,6 @@ describe("buildCard · schema correctness", () => {
 
 describe("buildCard · user text is not interpreted as card markup (#16)", () => {
   const AT = "<at id=all></at>";
-
-  /** All markdown text in the card, concatenated. */
-  const textOf = (message: EventMessage): string => elementMarkdown(buildCard(message).elements);
-
-  const pushWith = (commitMessage: string, opts: { ref?: string; author?: string } = {}): EventMessage =>
-    msg("push", {
-      ref: opts.ref ?? "refs/heads/main",
-      total_commits: 1,
-      commits: [{ id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } }],
-    }, { ref: opts.ref ?? "refs/heads/main" });
 
   it("escapes an <at> tag smuggled through a commit message", () => {
     const text = textOf(pushWith(AT));
@@ -1344,13 +1016,6 @@ describe("buildCard · fork button (#17)", () => {
 });
 
 describe("buildCard · navigation buttons (#26)", () => {
-  /** Buttons of a card built through the production path, in render order. */
-  const buttonsOf = (
-    event: string,
-    payload: Record<string, unknown>,
-    action?: string,
-  ): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
-
   /**
    * One GitHub-shaped fixture per builder, keyed by event so a test names the
    * card it means rather than an array position that shifts when one is added.
@@ -1435,16 +1100,6 @@ describe("buildCard · navigation buttons (#26)", () => {
       },
     },
   };
-
-  /** Label + style of each button a card renders, for the weight assertions. */
-  const stylesOf = (
-    event: string,
-    payload: Record<string, unknown>,
-    action?: string,
-  ): string[] =>
-    findRawButtons(prodCard(event, payload, action).elements).map(
-      (button) => `${button.label}:${button.type}`,
-    );
 
   /** Buttons of the canonical fixture for `event`, in render order. */
   const fixtureButtons = (event: string): { label: string; url: string }[] => {
