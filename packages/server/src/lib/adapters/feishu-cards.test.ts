@@ -1739,7 +1739,7 @@ describe("buildCard · dedicated card registry (#30)", () => {
     // The registry replaced a `switch`, so dropping an entry no longer fails to
     // compile anywhere — the event would just quietly start rendering as the
     // fallback. This list is the checklist that makes such a removal visible.
-    expect([...DEDICATED_EVENTS].sort()).toEqual([
+    expect(DEDICATED_EVENTS.toSorted()).toEqual([
       "deployment_status",
       "fork",
       "issue_comment",

@@ -109,13 +109,18 @@ describe("dispatch", () => {
   ];
 
   it("maps every ChannelError variant onto a logged failure instead of throwing", async () => {
-    for (const [label, error, expected] of failures) {
-      const result = await dispatch(
-        message,
-        channel,
-        registry("feishu", { status: "fail", error }),
-        3,
-      );
+    const mapped = await Promise.all(
+      failures.map(async ([label, error, expected]) => {
+        const result = await dispatch(
+          message,
+          channel,
+          registry("feishu", { status: "fail", error }),
+          3,
+        );
+        return [label, result, expected] as const;
+      }),
+    );
+    for (const [label, result, expected] of mapped) {
       expect([label, result]).toEqual([label, { status: "fail", channelId: 3, error: expected }]);
     }
   });
