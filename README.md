@@ -18,7 +18,7 @@
 
 ## The problem
 
-Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, release, star, fork — you want a timely heads-up in the group chat. The existing options are either a rigid GitHub Action, a pure CLI, or a SaaS that doesn't let you own your data or your routing rules. None of them give you a **configurable pipeline** *and* a **visual admin UI** in one self-hosted box.
+Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, release, star, fork — you want a timely heads-up in the group chat. The existing options are either a rigid GitHub Action, a pure CLI, or a SaaS that doesn't let you own your data or your routing rules. None of them give you a **configurable pipeline** _and_ a **visual admin UI** in one self-hosted box.
 
 ## How notify-bus does it
 
@@ -35,14 +35,14 @@ Your team lives in GitHub and chats in Feishu / Lark. Every push, PR, issue, rel
                                                     │  (Feishu today; Slack / DingTalk / WeCom / Discord next)
 ```
 
-- **Webhook in, notifications out.** Verify GitHub's HMAC-SHA256 signature against the raw body, match the event against your routes, render the configured template, and dispatch it to the channel's adapter. *(The configurable middleware pipeline — Filter / Enricher / Template — is the M2 milestone and is not built yet.)*
+- **Webhook in, notifications out.** Verify GitHub's HMAC-SHA256 signature against the raw body, match the event against your routes, render the configured template, and dispatch it to the channel's adapter. _(The configurable middleware pipeline — Filter / Enricher / Template — is the M2 milestone and is not built yet.)_
 - **Multi-channel by design, not by accident.** A `ChannelAdapter` interface is the only thing a new channel needs to implement. Feishu is the first adapter; the routing and config layer is channel-agnostic.
 - **Configure without redeploying.** A built-in admin UI (React + Vite + Tailwind) edits routes, channels, and templates against a REST API — backed by `bun:sqlite`. No YAML round-trips to adjust a rule.
-- **One image, one process.** Ships as a single Bun process that serves the API *and* the built frontend. One Docker container, one volume for data. The repo is a Bun workspace monorepo (`packages/server` + `packages/web`) that builds into that one image.
+- **One image, one process.** Ships as a single Bun process that serves the API _and_ the built frontend. One Docker container, one volume for data. The repo is a Bun workspace monorepo (`packages/server` + `packages/web`) that builds into that one image.
 
 ## 5-minute tour
 
-*(The steps below work today: GitHub webhooks in, Feishu cards out. The configurable middleware pipeline is M2 and not built yet.)*
+_(The steps below work today: GitHub webhooks in, Feishu cards out. The configurable middleware pipeline is M2 and not built yet.)_
 
 ```bash
 # Run locally
@@ -58,14 +58,14 @@ Then point a GitHub webhook at `https://your-host/webhook`, add a Feishu custom-
 
 ## How it's different
 
-| | GitHub Action / raw webhook | SaaS notifier | **notify-bus** |
-|---|---|---|---|
-| **Self-hosted / own your data** | ✅ | ❌ | ✅ |
-| **Configurable pipeline** | ❌ (recode to change) | partial | ✅ Filter / Enricher / Template |
-| **Visual admin UI** | ❌ | ✅ | ✅ |
-| **Multi-channel** | manual per channel | per-plan limits | ✅ `ChannelAdapter` interface |
-| **Templates per event** | hardcoded | limited | ✅ Handlebars, per event type |
-| **License** | varies | proprietary | ✅ MIT |
+|                                 | GitHub Action / raw webhook | SaaS notifier   | **notify-bus**                  |
+| ------------------------------- | --------------------------- | --------------- | ------------------------------- |
+| **Self-hosted / own your data** | ✅                          | ❌              | ✅                              |
+| **Configurable pipeline**       | ❌ (recode to change)       | partial         | ✅ Filter / Enricher / Template |
+| **Visual admin UI**             | ❌                          | ✅              | ✅                              |
+| **Multi-channel**               | manual per channel          | per-plan limits | ✅ `ChannelAdapter` interface   |
+| **Templates per event**         | hardcoded                   | limited         | ✅ Handlebars, per event type   |
+| **License**                     | varies                      | proprietary     | ✅ MIT                          |
 
 ## Architecture (in brief)
 
@@ -95,6 +95,7 @@ Then point a GitHub webhook at `https://your-host/webhook`, add a Feishu custom-
 ```
 
 Two config sources, merged at runtime:
+
 - **YAML** (`config.yaml`) — seed/bootstrap config, human-edited, supports hot reload.
 - **SQLite** (`data.db`) — the source of truth for routes, channels, templates, logs; edited via the admin UI / REST API.
 

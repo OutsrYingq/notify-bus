@@ -4,7 +4,15 @@
  */
 import type { ReactNode } from "react";
 
-function PageShell({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+function PageShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">{title}</h1>
@@ -18,7 +26,9 @@ function ComingSoon({ milestone }: { milestone: string }) {
   return (
     <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 p-12 text-center text-gray-400">
       <p className="text-lg">🚧 Under construction</p>
-      <p className="text-sm mt-2">Lands in <span className="font-mono font-semibold">{milestone}</span></p>
+      <p className="text-sm mt-2">
+        Lands in <span className="font-mono font-semibold">{milestone}</span>
+      </p>
     </div>
   );
 }

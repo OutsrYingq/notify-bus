@@ -72,10 +72,7 @@ export interface FeishuCard {
 // ─── payload accessors ─────────────────────────────────────────────────────
 
 export function asObj(value: unknown): Record<string, unknown> {
-  return (value && typeof value === "object" ? value : {}) as Record<
-    string,
-    unknown
-  >;
+  return (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
 }
 export function asStr(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -214,12 +211,9 @@ export interface NavTarget {
  * One button renders bare, several share an equally-weighted row. The card's own
  * object is `primary`; the repository added here is always `default`.
  */
-export function navigationButtons(
-  targets: readonly NavTarget[],
-  repoUrl: string,
-): CardElement[] {
-  const buttons = targets.filter(
-    (target): target is NavTarget & { url: string } => Boolean(target.url),
+export function navigationButtons(targets: readonly NavTarget[], repoUrl: string): CardElement[] {
+  const buttons = targets.filter((target): target is NavTarget & { url: string } =>
+    Boolean(target.url),
   );
   if (repoUrl && !buttons.some((button) => button.url === repoUrl)) {
     buttons.push({ label: "View Repo", url: repoUrl, type: "default" });
@@ -229,13 +223,7 @@ export function navigationButtons(
     const only = buttons[0]!;
     return [linkButton(only.label, only.url, only.type)];
   }
-  return [
-    columnSet(
-      buttons.map((button) => [
-        linkButton(button.label, button.url, button.type),
-      ]),
-    ),
-  ];
+  return [columnSet(buttons.map((button) => [linkButton(button.label, button.url, button.type)]))];
 }
 
 // ─── action palette ────────────────────────────────────────────────────────

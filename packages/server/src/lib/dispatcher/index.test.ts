@@ -74,12 +74,7 @@ describe("dispatch", () => {
   });
 
   it("fails without an adapter when no adapter is registered for the channel type", async () => {
-    const result = await dispatch(
-      message,
-      channel,
-      registry("slack", { status: "success" }),
-      1,
-    );
+    const result = await dispatch(message, channel, registry("slack", { status: "success" }), 1);
     expect(result).toEqual({
       status: "fail",
       channelId: 1,
@@ -121,10 +116,7 @@ describe("dispatch", () => {
         registry("feishu", { status: "fail", error }),
         3,
       );
-      expect([label, result]).toEqual([
-        label,
-        { status: "fail", channelId: 3, error: expected },
-      ]);
+      expect([label, result]).toEqual([label, { status: "fail", channelId: 3, error: expected }]);
     }
   });
 

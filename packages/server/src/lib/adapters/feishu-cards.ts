@@ -170,9 +170,7 @@ interface MembershipDetails {
   previousPermission?: string;
 }
 
-function resolveMembershipDetails(
-  payload: Record<string, unknown>,
-): MembershipDetails {
+function resolveMembershipDetails(payload: Record<string, unknown>): MembershipDetails {
   const membership = asObj(payload.membership);
   const team = asObj(payload.team);
   const invitation = asObj(payload.invitation);
@@ -220,10 +218,7 @@ interface PrimaryLink {
  * Returns null when there is no usable URL — a button with an empty
  * `default_url` does nothing when clicked (#6).
  */
-function resolvePrimaryLink(
-  payload: Record<string, unknown>,
-  repoUrl: string,
-): PrimaryLink | null {
+function resolvePrimaryLink(payload: Record<string, unknown>, repoUrl: string): PrimaryLink | null {
   const commentUrl = asStr(asObj(payload.comment).html_url);
   if (commentUrl) return { url: commentUrl, label: "View Comment" };
   if (!repoUrl) return null;
@@ -244,8 +239,7 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const p = message.payload;
   const repo = message.repository.full_name;
   const repoUrl = message.repository.html_url;
-  const pusher =
-    asStr(asObj(p.pusher).name) ?? asStr(asObj(p.sender).login) ?? message.actor.login;
+  const pusher = asStr(asObj(p.pusher).name) ?? asStr(asObj(p.sender).login) ?? message.actor.login;
   const branch = extractBranch(message.ref);
   const compare = asStr(p.compare);
   const commits = asArr(p.commits).map((c) => {
@@ -282,9 +276,7 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
   const elements: CardElement[] = [];
 
   // Info row: author + branch | file-change stats (colored).
-  const leftCol = markdown(
-    `👤 **${md(pusher)}**${branch ? `\n🔀 \`${md(branch)}\`` : ""}`,
-  );
+  const leftCol = markdown(`👤 **${md(pusher)}**${branch ? `\n🔀 \`${md(branch)}\`` : ""}`);
   const rightParts: string[] = [];
   if (changed > 0) {
     rightParts.push(
@@ -333,10 +325,7 @@ function buildPushCard(message: EventMessage, body: string): FeishuCard {
   // The commit list links to individual commits; nothing yet reached the
   // repository itself, whose only mention was the plain-text subtitle (#26).
   elements.push(
-    ...navigationButtons(
-      [{ label: "Compare changes", url: compareUrl, type: "primary" }],
-      repoUrl,
-    ),
+    ...navigationButtons([{ label: "Compare changes", url: compareUrl, type: "primary" }], repoUrl),
   );
 
   const badges: HeaderBadge[] = [{ text: "push", color: "blue" }];
@@ -410,7 +399,8 @@ function buildPullRequestCard(message: EventMessage, body: string): FeishuCard {
   const rightLines: string[] = [];
   if (additions !== undefined) rightLines.push(colored("green", `+${additions}`));
   if (deletions !== undefined) rightLines.push(colored("red", `-${deletions}`));
-  if (changedFiles !== undefined) rightLines.push(`📁 ${changedFiles} file${changedFiles === 1 ? "" : "s"}`);
+  if (changedFiles !== undefined)
+    rightLines.push(`📁 ${changedFiles} file${changedFiles === 1 ? "" : "s"}`);
   elements.push(hr());
   elements.push(columnSet([[markdown(leftLines.join("\n"))], [markdown(rightLines.join("  "))]]));
   // Issues have always shown their labels; PRs showed none at all, for the same
@@ -458,7 +448,9 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
   const issueUrl = asStr(issue.html_url);
   const issueBody = truncate(asStr(issue.body), 300);
   const user = asStr(asObj(issue.user).login) ?? message.actor.login;
-  const labels = asArr(issue.labels).map((l) => asStr(asObj(l).name)).filter(Boolean) as string[];
+  const labels = asArr(issue.labels)
+    .map((l) => asStr(asObj(l).name))
+    .filter(Boolean) as string[];
 
   const elements: CardElement[] = [];
   elements.push(markdown(`### ${md(title)}`));
@@ -469,19 +461,13 @@ function buildIssuesCard(message: EventMessage, body: string): FeishuCard {
   // full-width instead of an empty label column.
   elements.push(hr());
   if (labels.length > 0) {
-    elements.push(columnSet([
-      [markdown(`👤 **${md(user)}**`)],
-      [markdown(renderLabels(labels))],
-    ]));
+    elements.push(columnSet([[markdown(`👤 **${md(user)}**`)], [markdown(renderLabels(labels))]]));
   } else {
     elements.push(markdown(`👤 **${md(user)}**`));
   }
 
   elements.push(
-    ...navigationButtons(
-      [{ label: "View Issue", url: issueUrl, type: "primary" }],
-      repoUrl,
-    ),
+    ...navigationButtons([{ label: "View Issue", url: issueUrl, type: "primary" }], repoUrl),
   );
 
   return {
@@ -521,10 +507,7 @@ function buildReleaseCard(message: EventMessage, body: string): FeishuCard {
   elements.push(markdown(rightLines.join("\n")));
 
   elements.push(
-    ...navigationButtons(
-      [{ label: "View Release", url: releaseUrl, type: "primary" }],
-      repoUrl,
-    ),
+    ...navigationButtons([{ label: "View Release", url: releaseUrl, type: "primary" }], repoUrl),
   );
 
   const badges: HeaderBadge[] = [];
@@ -573,7 +556,9 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
   const forkeeName = asStr(forkee.full_name) ?? "a fork";
 
   const elements: CardElement[] = [
-    markdown(`**${md(actor)}** forked 🍴\n${maybeLink(repo, repoUrl)} → ${maybeLink(forkeeName, forkeeUrl ?? repoUrl)}`),
+    markdown(
+      `**${md(actor)}** forked 🍴\n${maybeLink(repo, repoUrl)} → ${maybeLink(forkeeName, forkeeUrl ?? repoUrl)}`,
+    ),
   ];
   if (body) elements.push(markdown(body));
   // The body reads "A → B(fork)", so the button has to open the fork. It used
@@ -583,9 +568,7 @@ function buildForkCard(message: EventMessage, body: string): FeishuCard {
   // deliberately carries one button only — no second "View Repo" (#26).
   const forkTarget = forkeeUrl ?? repoUrl;
   if (forkTarget) {
-    elements.push(
-      linkButton(forkeeUrl ? "View Fork" : "View Repo", forkTarget, "default"),
-    );
+    elements.push(linkButton(forkeeUrl ? "View Fork" : "View Repo", forkTarget, "default"));
   }
 
   return {
@@ -667,9 +650,7 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   // relationship every other builder has with `body`. Letting `body` win
   // discarded everything above, so configuring a template made this card *less*
   // informative than leaving it unset (#16).
-  const content = [lines.join("\n"), body]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
+  const content = [lines.join("\n"), body].filter((part) => part.length > 0).join("\n\n");
 
   const elements: CardElement[] = [markdown(content)];
   // Only emit a button when there is a real URL — a dead button does nothing

@@ -49,10 +49,14 @@ describe("buildCard · repository (#21)", () => {
   });
 
   it("shows the previous name on a rename, and no line at all without one", () => {
-    const renamed = prodCard("repository", {
-      ...fixture("renamed"),
-      changes: { repository: { name: { from: "old-name" } } },
-    }, "renamed");
+    const renamed = prodCard(
+      "repository",
+      {
+        ...fixture("renamed"),
+        changes: { repository: { name: { from: "old-name" } } },
+      },
+      "renamed",
+    );
     expect(elementMarkdown(renamed.elements)).toContain("old-name");
 
     // A payload without the `changes` path degrades to no line (#21) — never to
@@ -62,10 +66,14 @@ describe("buildCard · repository (#21)", () => {
   });
 
   it("shows the previous owner on a transfer, and no line at all without one", () => {
-    const transferred = prodCard("repository", {
-      ...fixture("transferred"),
-      changes: { owner: { from: { user: { login: "old-owner" } } } },
-    }, "transferred");
+    const transferred = prodCard(
+      "repository",
+      {
+        ...fixture("transferred"),
+        changes: { owner: { from: { user: { login: "old-owner" } } } },
+      },
+      "transferred",
+    );
     expect(elementMarkdown(transferred.elements)).toContain("old-owner");
 
     const partial = prodCard("repository", fixture("transferred"), "transferred");
@@ -116,10 +124,14 @@ describe("buildCard · repository (#21)", () => {
   });
 
   it("appends a configured template beside the change it describes", () => {
-    const message = msg("repository", {
-      ...fixture("renamed"),
-      changes: { repository: { name: { from: "old-name" } } },
-    }, { action: "renamed" });
+    const message = msg(
+      "repository",
+      {
+        ...fixture("renamed"),
+        changes: { repository: { name: { from: "old-name" } } },
+      },
+      { action: "renamed" },
+    );
     const text = elementMarkdown(
       buildCard(renderFormatted(message, "Please update your remotes")).elements,
     );
@@ -141,10 +153,14 @@ describe("buildCard · repository (#21)", () => {
     // GitHub's documented `transferred` example uses the `user` owner shape;
     // an organization-owned previous owner carries the same `login` under
     // `organization`. Reading only `user` dropped this case silently.
-    const transferred = prodCard("repository", {
-      ...fixture("transferred"),
-      changes: { owner: { from: { organization: { login: "old-org" } } } },
-    }, "transferred");
+    const transferred = prodCard(
+      "repository",
+      {
+        ...fixture("transferred"),
+        changes: { owner: { from: { organization: { login: "old-org" } } } },
+      },
+      "transferred",
+    );
     expect(elementMarkdown(transferred.elements)).toContain("old-org");
   });
 
@@ -154,5 +170,4 @@ describe("buildCard · repository (#21)", () => {
     // here: the fallback titles itself `📋 repository`, this card `📦 edited`.
     expect(prodCard("repository", fixture("edited"), "edited").header.title).toBe("📦 edited");
   });
-
 });

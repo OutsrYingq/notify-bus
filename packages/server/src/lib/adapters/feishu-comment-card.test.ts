@@ -125,7 +125,11 @@ describe("buildCard · issue_comment (#21)", () => {
   });
 
   it("says unknown — not the actor — when the payload names no author", () => {
-    const text = cardText("issue_comment", fixture("created", { comment: { user: null } }), "created");
+    const text = cardText(
+      "issue_comment",
+      fixture("created", { comment: { user: null } }),
+      "created",
+    );
     expect(text).toContain("unknown");
     expect(text).not.toContain("alice");
   });

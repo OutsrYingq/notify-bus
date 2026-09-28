@@ -4,13 +4,10 @@
   "private": true,
   "description": "Self-hostable multi-channel notification bus. GitHub webhooks in, Feishu (and more) out. Bun + Elysia + React.",
   "license": "MIT",
-  "type": "module",
-  "engines": {
-    "bun": ">=1.4"
-  },
   "workspaces": [
     "packages/*"
   ],
+  "type": "module",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green 'bun run --watch packages/server/src/index.ts' 'cd packages/web && bun run dev'",
     "dev:server": "bun run --watch packages/server/src/index.ts",
@@ -26,9 +23,12 @@
     "typecheck": "tsc -b"
   },
   "devDependencies": {
-    "typescript": "7.0.2",
-    "oxlint": "1.73.0",
+    "concurrently": "^9.0.0",
     "oxfmt": "0.58.0",
-    "concurrently": "^9.0.0"
+    "oxlint": "1.73.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4"
   }
 }

@@ -165,9 +165,6 @@ export function matchRoute(config: SeedConfig, event: EventMessage): RouteMatch 
 
 /** Find the Handlebars template for an event type (first match). M1: no
  * channel-type scoping yet; that comes with M3. */
-export function findTemplate(
-  config: SeedConfig,
-  eventType: string,
-): SeedTemplate | undefined {
+export function findTemplate(config: SeedConfig, eventType: string): SeedTemplate | undefined {
   return (config.templates ?? []).find((t) => t.event_type === eventType);
 }

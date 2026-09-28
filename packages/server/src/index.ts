@@ -53,12 +53,8 @@ const app = new Elysia()
   });
 
 app.listen(PORT, () => {
-  console.log(
-    `🚌 notify-bus listening on http://localhost:${PORT} (env: ${NODE_ENV})`,
-  );
-  console.log(
-    `   adapters: ${[...adapterRegistry.keys()].join(", ") || "(none)"}`,
-  );
+  console.log(`🚌 notify-bus listening on http://localhost:${PORT} (env: ${NODE_ENV})`);
+  console.log(`   adapters: ${[...adapterRegistry.keys()].join(", ") || "(none)"}`);
   console.log(
     `   config: ${seedConfig ? "loaded" : "none"} · webhook secret: ${GITHUB_WEBHOOK_SECRET ? "set" : "NOT SET (verify skipped)"}`,
   );

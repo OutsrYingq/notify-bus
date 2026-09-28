@@ -32,7 +32,11 @@ const prCard = (action: string, extra: Record<string, unknown> = {}) =>
   buildCard(
     msg(
       "pull_request",
-      { action, number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra } },
+      {
+        action,
+        number: 1,
+        pull_request: { title: "t", html_url: "u", user: { login: "x" }, ...extra },
+      },
       { action },
     ),
   );
@@ -50,12 +54,21 @@ function badgeColor(event: string, action: string): string | undefined {
 const textOf = (message: EventMessage): string => elementMarkdown(buildCard(message).elements);
 
 /** A one-commit push whose commit message is `commitMessage`. */
-const pushWith = (commitMessage: string, opts: { ref?: string; author?: string } = {}): EventMessage =>
-  msg("push", {
-    ref: opts.ref ?? "refs/heads/main",
-    total_commits: 1,
-    commits: [{ id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } }],
-  }, { ref: opts.ref ?? "refs/heads/main" });
+const pushWith = (
+  commitMessage: string,
+  opts: { ref?: string; author?: string } = {},
+): EventMessage =>
+  msg(
+    "push",
+    {
+      ref: opts.ref ?? "refs/heads/main",
+      total_commits: 1,
+      commits: [
+        { id: "abc1234567", message: commitMessage, author: { name: opts.author ?? "Alice" } },
+      ],
+    },
+    { ref: opts.ref ?? "refs/heads/main" },
+  );
 
 /** Buttons of a card built through the production path, in render order. */
 const buttonsOf = (
@@ -65,11 +78,7 @@ const buttonsOf = (
 ): { label: string; url: string }[] => findButtons(prodCard(event, payload, action).elements);
 
 /** Label + style of each button a card renders, for the weight assertions. */
-const stylesOf = (
-  event: string,
-  payload: Record<string, unknown>,
-  action?: string,
-): string[] =>
+const stylesOf = (event: string, payload: Record<string, unknown>, action?: string): string[] =>
   findRawButtons(prodCard(event, payload, action).elements).map(
     (button) => `${button.label}:${button.type}`,
   );
@@ -84,7 +93,11 @@ describe("buildCard · push", () => {
         pusher: { name: "alice" },
         commits: [
           { id: "0123456789abcdef", message: "fix: login\n\n细节", author: { name: "Alice" } },
-          { id: "fedcba9876543210", message: "docs: readme", author: { name: "Alice", username: "alice" } },
+          {
+            id: "fedcba9876543210",
+            message: "docs: readme",
+            author: { name: "Alice", username: "alice" },
+          },
         ],
         head_commit: { added: ["a.ts"], modified: ["b.ts", "c.ts"], removed: ["d.ts"] },
       },
@@ -126,7 +139,9 @@ describe("buildCard · push", () => {
       message: `commit ${i}`,
       author: { name: "Alice" },
     }));
-    const c = buildCard(msg("push", { ref: "refs/heads/x", commits: many }, { ref: "refs/heads/x" }));
+    const c = buildCard(
+      msg("push", { ref: "refs/heads/x", commits: many }, { ref: "refs/heads/x" }),
+    );
     expect(elementMarkdown(c.elements)).toContain("+3 more commits");
   });
 });
@@ -174,7 +189,11 @@ describe("buildCard · push · push state (#15)", () => {
 
   it("uses the singular for a one-commit push", () => {
     const card = buildCard(
-      msg("push", { ref: "refs/heads/main", commits: [{ id: "abcdefg1234", message: "one" }] }, { ref: "refs/heads/main" }),
+      msg(
+        "push",
+        { ref: "refs/heads/main", commits: [{ id: "abcdefg1234", message: "one" }] },
+        { ref: "refs/heads/main" },
+      ),
     );
     expect(card.header.title).toBe("📦 1 commit pushed");
   });
@@ -183,7 +202,11 @@ describe("buildCard · push · push state (#15)", () => {
     const card = buildCard(
       msg(
         "push",
-        { ref: "refs/heads/main", forced: true, commits: [{ id: "abc1234567", message: "rewritten" }] },
+        {
+          ref: "refs/heads/main",
+          forced: true,
+          commits: [{ id: "abc1234567", message: "rewritten" }],
+        },
         { ref: "refs/heads/main" },
       ),
     );
@@ -196,7 +219,11 @@ describe("buildCard · push · push state (#15)", () => {
     // and a null `head_commit` — its own published push payload example is a
     // branch deletion.
     const card = buildCard(
-      msg("push", { ref: "refs/heads/old", deleted: true, commits: [], head_commit: null }, { ref: "refs/heads/old" }),
+      msg(
+        "push",
+        { ref: "refs/heads/old", deleted: true, commits: [], head_commit: null },
+        { ref: "refs/heads/old" },
+      ),
     );
     expect(card.header.title).toBe("🌿 branch deleted");
     expect(card.header.badges).toContainEqual({ text: "branch deleted", color: "red" });
@@ -207,7 +234,11 @@ describe("buildCard · push · push state (#15)", () => {
     // A deleted branch's `after` sha is all zeros, so the target is meaningless.
     const compare = "https://github.com/org/repo/compare/aaa...000";
     const card = buildCard(
-      msg("push", { ref: "refs/heads/old", deleted: true, commits: [], compare }, { ref: "refs/heads/old" }),
+      msg(
+        "push",
+        { ref: "refs/heads/old", deleted: true, commits: [], compare },
+        { ref: "refs/heads/old" },
+      ),
     );
     expect(findButtonUrls(card.elements)).not.toContain(compare);
   });
@@ -225,7 +256,11 @@ describe("buildCard · push · push state (#15)", () => {
 
   it("leaves an ordinary push marked only as a push", () => {
     const card = buildCard(
-      msg("push", { ref: "refs/heads/main", commits: [{ id: "abc1234567", message: "a" }] }, { ref: "refs/heads/main" }),
+      msg(
+        "push",
+        { ref: "refs/heads/main", commits: [{ id: "abc1234567", message: "a" }] },
+        { ref: "refs/heads/main" },
+      ),
     );
     expect(card.header.badges).toEqual([{ text: "push", color: "blue" }]);
     expect(card.header.template).toBe("blue");
@@ -401,29 +436,37 @@ describe("buildCard · action badge palette (#15)", () => {
 describe("buildCard · issues", () => {
   it("is orange when opened, green when closed, with action badges", () => {
     const opened = buildCard(
-      msg("issues", {
-        action: "opened",
-        number: 7,
-        issue: {
-          title: "Bug",
-          html_url: "https://github.com/org/repo/issues/7",
-          body: "it broke",
-          user: { login: "carol" },
-          state: "open",
-          labels: [{ name: "bug" }, { name: "ui" }],
+      msg(
+        "issues",
+        {
+          action: "opened",
+          number: 7,
+          issue: {
+            title: "Bug",
+            html_url: "https://github.com/org/repo/issues/7",
+            body: "it broke",
+            user: { login: "carol" },
+            state: "open",
+            labels: [{ name: "bug" }, { name: "ui" }],
+          },
         },
-      }, { action: "opened" }),
+        { action: "opened" },
+      ),
     );
     expect(opened.header.template).toBe("orange");
     expect(opened.header.badges?.[0]).toEqual({ text: "opened", color: "turquoise" });
     expect(findButtonUrls(opened.elements)).toContain("https://github.com/org/repo/issues/7");
 
     const closed = buildCard(
-      msg("issues", {
-        action: "closed",
-        number: 7,
-        issue: { title: "Bug", html_url: "u", user: { login: "c" }, state: "closed" },
-      }, { action: "closed" }),
+      msg(
+        "issues",
+        {
+          action: "closed",
+          number: 7,
+          issue: { title: "Bug", html_url: "u", user: { login: "c" }, state: "closed" },
+        },
+        { action: "closed" },
+      ),
     );
     expect(closed.header.template).toBe("green");
     expect(closed.header.badges?.[0]).toEqual({ text: "closed", color: "red" });
@@ -431,16 +474,20 @@ describe("buildCard · issues", () => {
 
   it("renders labels as colored text_tag pills", () => {
     const card = buildCard(
-      msg("issues", {
-        action: "opened",
-        number: 1,
-        issue: {
-          title: "t",
-          html_url: "u",
-          user: { login: "c" },
-          labels: [{ name: "bug" }, { name: "enhancement" }],
+      msg(
+        "issues",
+        {
+          action: "opened",
+          number: 1,
+          issue: {
+            title: "t",
+            html_url: "u",
+            user: { login: "c" },
+            labels: [{ name: "bug" }, { name: "enhancement" }],
+          },
         },
-      }, { action: "opened" }),
+        { action: "opened" },
+      ),
     );
     const text = elementMarkdown(card.elements);
     expect(text).toContain('<text_tag color="blue">bug</text_tag>');
@@ -451,31 +498,39 @@ describe("buildCard · issues", () => {
     // Real `issues` webhook payloads nest the number under `issue.number`,
     // with NO top-level `number`. Regression for the '#?' bug (#8).
     const card = buildCard(
-      msg("issues", {
-        action: "opened",
-        issue: {
-          number: 42,
-          title: "Something broke",
-          html_url: "https://github.com/org/repo/issues/42",
-          user: { login: "carol" },
+      msg(
+        "issues",
+        {
+          action: "opened",
+          issue: {
+            number: 42,
+            title: "Something broke",
+            html_url: "https://github.com/org/repo/issues/42",
+            user: { login: "carol" },
+          },
         },
-      }, { action: "opened" }),
+        { action: "opened" },
+      ),
     );
     expect(card.header.title).toBe("📌 Issue #42");
   });
 
   it("does not render a label column when the issue has no labels", () => {
     const card = buildCard(
-      msg("issues", {
-        action: "opened",
-        issue: {
-          number: 5,
-          title: "No labels here",
-          html_url: "u",
-          user: { login: "c" },
-          labels: [],
+      msg(
+        "issues",
+        {
+          action: "opened",
+          issue: {
+            number: 5,
+            title: "No labels here",
+            html_url: "u",
+            user: { login: "c" },
+            labels: [],
+          },
         },
-      }, { action: "opened" }),
+        { action: "opened" },
+      ),
     );
     const text = elementMarkdown(card.elements);
     expect(text).not.toContain("🏷️");
@@ -487,31 +542,47 @@ describe("buildCard · issues", () => {
 describe("buildCard · release", () => {
   it("is turquoise, with tag + author + button", () => {
     const card = buildCard(
-      msg("release", {
-        action: "published",
-        release: {
-          name: "v1.0.0",
-          tag_name: "v1.0.0",
-          html_url: "https://github.com/org/repo/releases/tag/v1.0.0",
-          body: "## What's new\n- stuff",
-          author: { login: "dave" },
-          prerelease: false,
-          assets: [{ name: "a.zip" }, { name: "b.zip" }],
+      msg(
+        "release",
+        {
+          action: "published",
+          release: {
+            name: "v1.0.0",
+            tag_name: "v1.0.0",
+            html_url: "https://github.com/org/repo/releases/tag/v1.0.0",
+            body: "## What's new\n- stuff",
+            author: { login: "dave" },
+            prerelease: false,
+            assets: [{ name: "a.zip" }, { name: "b.zip" }],
+          },
         },
-      }, { action: "published" }),
+        { action: "published" },
+      ),
     );
     expect(card.header.template).toBe("turquoise");
     expect(card.header.badges?.[0]).toEqual({ text: "v1.0.0", color: "neutral" });
     expect(elementMarkdown(card.elements)).toContain("2 assets");
-    expect(findButtonUrls(card.elements)).toContain("https://github.com/org/repo/releases/tag/v1.0.0");
+    expect(findButtonUrls(card.elements)).toContain(
+      "https://github.com/org/repo/releases/tag/v1.0.0",
+    );
   });
 
   it("is yellow + prerelease badge for a prerelease", () => {
     const card = buildCard(
-      msg("release", {
-        action: "prereleased",
-        release: { name: "v2-beta", tag_name: "v2.0.0-beta", html_url: "u", author: { login: "d" }, prerelease: true },
-      }, { action: "prereleased" }),
+      msg(
+        "release",
+        {
+          action: "prereleased",
+          release: {
+            name: "v2-beta",
+            tag_name: "v2.0.0-beta",
+            html_url: "u",
+            author: { login: "d" },
+            prerelease: true,
+          },
+        },
+        { action: "prereleased" },
+      ),
     );
     expect(card.header.template).toBe("yellow");
     expect(card.header.badges?.some((b) => b.text === "prerelease")).toBe(true);
@@ -550,11 +621,21 @@ describe("buildCard · fallback", () => {
   it("surfaces the org member and role for an `organization` event", () => {
     // `organization` is the event that carries `membership` — see the subject
     // tests below for the events that do not.
-    const card = buildCard(msg("organization", {
-      action: "member_added",
-      membership: { role: "member", state: "active", user: { login: "newperson", html_url: "https://github.com/newperson" } },
-      organization: { login: "someorg" },
-    }, { action: "member_added" }));
+    const card = buildCard(
+      msg(
+        "organization",
+        {
+          action: "member_added",
+          membership: {
+            role: "member",
+            state: "active",
+            user: { login: "newperson", html_url: "https://github.com/newperson" },
+          },
+          organization: { login: "someorg" },
+        },
+        { action: "member_added" },
+      ),
+    );
     const text = elementMarkdown(card.elements);
     expect(text).toContain("newperson");
     expect(text).toContain("`member`"); // role
@@ -570,7 +651,11 @@ describe("buildCard · fallback", () => {
       action: "member_added",
       repository: { full_name: "someorg", html_url: "" },
       actor: { login: "someone", avatar_url: "" },
-      payload: { action: "member_added", membership: { user: { login: "x" } }, organization: { login: "someorg" } },
+      payload: {
+        action: "member_added",
+        membership: { user: { login: "x" } },
+        organization: { login: "someorg" },
+      },
       metadata: {},
     };
     const card = buildCard(emptyUrlMsg);
@@ -581,12 +666,18 @@ describe("buildCard · fallback", () => {
     // GitHub repo-scoped payloads include BOTH repository AND organization
     // when the repo is org-owned. Must not be misdetected as an org event.
     // (`label` has no dedicated builder, so this stays a fallback assertion.)
-    const card = buildCard(msg("label", {
-      action: "created",
-      label: { name: "bug" },
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-      organization: { login: "org" },
-    }, { action: "created" }));
+    const card = buildCard(
+      msg(
+        "label",
+        {
+          action: "created",
+          label: { name: "bug" },
+          repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+          organization: { login: "org" },
+        },
+        { action: "created" },
+      ),
+    );
     // No "View Org" label anywhere in the rendered button.
     const btns = card.elements.filter((e) => (e as { tag?: string }).tag === "button");
     for (const b of btns) {
@@ -597,11 +688,17 @@ describe("buildCard · fallback", () => {
 
   it("labels View Org only for true org-scoped events (no repository in payload)", () => {
     // No `repository` key -> genuinely org-scoped -> "View Org".
-    const card = buildCard(msg("organization", {
-      action: "member_added",
-      membership: { user: { login: "x" } },
-      organization: { login: "someorg", html_url: "https://github.com/someorg" },
-    }, { action: "member_added" }));
+    const card = buildCard(
+      msg(
+        "organization",
+        {
+          action: "member_added",
+          membership: { user: { login: "x" } },
+          organization: { login: "someorg", html_url: "https://github.com/someorg" },
+        },
+        { action: "member_added" },
+      ),
+    );
     // Note: msg() normalizes repository to org/repo; the discriminator is the
     // RAW payload.repository, which is absent here. Expect View Org label.
     const btn = card.elements.find((e) => (e as { tag?: string }).tag === "button");
@@ -613,7 +710,14 @@ describe("buildCard · no whole-card link", () => {
   it("never emits a cardLink (regression guard against re-adding card_link)", () => {
     const events = ["push", "pull_request", "issues", "release", "star", "fork", "deployment"];
     for (const e of events) {
-      const c = buildCard(msg(e, e === "pull_request" ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } } : {}));
+      const c = buildCard(
+        msg(
+          e,
+          e === "pull_request"
+            ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } }
+            : {},
+        ),
+      );
       expect((c as { cardLink?: unknown }).cardLink).toBeUndefined();
       expect("cardLink" in c).toBe(false);
     }
@@ -623,11 +727,15 @@ describe("buildCard · no whole-card link", () => {
 describe("buildCard · schema correctness", () => {
   it("buttons use behaviors:[{type:'open_url',default_url}], not a top-level url", () => {
     const card = buildCard(
-      msg("pull_request", {
-        action: "opened",
-        number: 1,
-        pull_request: { title: "t", html_url: "https://x", user: { login: "y" } },
-      }, { action: "opened" }),
+      msg(
+        "pull_request",
+        {
+          action: "opened",
+          number: 1,
+          pull_request: { title: "t", html_url: "https://x", user: { login: "y" } },
+        },
+        { action: "opened" },
+      ),
     );
     for (const el of card.elements) {
       if ((el as { tag?: string }).tag !== "button") continue;
@@ -639,7 +747,14 @@ describe("buildCard · schema correctness", () => {
   it("no element uses the removed v2 tags (action, note)", () => {
     const events = ["push", "pull_request", "issues", "release", "star", "fork", "unknown"];
     for (const e of events) {
-      const card = buildCard(msg(e, e === "pull_request" ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } } : {}));
+      const card = buildCard(
+        msg(
+          e,
+          e === "pull_request"
+            ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } }
+            : {},
+        ),
+      );
       for (const el of card.elements) {
         const tag = (el as { tag?: string }).tag;
         expect(tag).not.toBe("action");
@@ -670,15 +785,128 @@ describe("buildCard · user text is not interpreted as card markup (#16)", () =>
   it("escapes `<` in every payload field that reaches a markdown element", () => {
     const cases: [string, EventMessage][] = [
       ["commit.author.name", pushWith("ok", { author: AT })],
-      ["pull_request.title", msg("pull_request", { action: "opened", number: 1, pull_request: { title: AT, html_url: "u", user: { login: "x" } } }, { action: "opened" })],
-      ["pull_request.body", msg("pull_request", { action: "opened", number: 1, pull_request: { title: "t", html_url: "u", body: AT, user: { login: "x" } } }, { action: "opened" })],
-      ["pull_request.head.ref", msg("pull_request", { action: "opened", number: 1, pull_request: { title: "t", html_url: "u", user: { login: "x" }, head: { ref: AT }, base: { ref: "main" } } }, { action: "opened" })],
-      ["issue.title", msg("issues", { action: "opened", issue: { number: 1, title: AT, html_url: "u", user: { login: "c" } } }, { action: "opened" })],
-      ["issue.body", msg("issues", { action: "opened", issue: { number: 1, title: "t", html_url: "u", body: AT, user: { login: "c" } } }, { action: "opened" })],
-      ["issue.labels[].name", msg("issues", { action: "opened", issue: { number: 1, title: "t", html_url: "u", user: { login: "c" }, labels: [{ name: AT }] } }, { action: "opened" })],
-      ["release.body", msg("release", { action: "published", release: { name: "v1", tag_name: "v1", html_url: "u", body: AT, author: { login: "d" } } }, { action: "published" })],
-      ["comment.body", msg("issue_comment", { action: "created", issue: { number: 1, title: "t" }, comment: { body: AT, html_url: "u" } }, { action: "created" })],
-      ["membership.role", msg("organization", { action: "member_added", membership: { role: AT, user: { login: "m" } }, organization: { login: "o" } }, { action: "member_added" })],
+      [
+        "pull_request.title",
+        msg(
+          "pull_request",
+          {
+            action: "opened",
+            number: 1,
+            pull_request: { title: AT, html_url: "u", user: { login: "x" } },
+          },
+          { action: "opened" },
+        ),
+      ],
+      [
+        "pull_request.body",
+        msg(
+          "pull_request",
+          {
+            action: "opened",
+            number: 1,
+            pull_request: { title: "t", html_url: "u", body: AT, user: { login: "x" } },
+          },
+          { action: "opened" },
+        ),
+      ],
+      [
+        "pull_request.head.ref",
+        msg(
+          "pull_request",
+          {
+            action: "opened",
+            number: 1,
+            pull_request: {
+              title: "t",
+              html_url: "u",
+              user: { login: "x" },
+              head: { ref: AT },
+              base: { ref: "main" },
+            },
+          },
+          { action: "opened" },
+        ),
+      ],
+      [
+        "issue.title",
+        msg(
+          "issues",
+          {
+            action: "opened",
+            issue: { number: 1, title: AT, html_url: "u", user: { login: "c" } },
+          },
+          { action: "opened" },
+        ),
+      ],
+      [
+        "issue.body",
+        msg(
+          "issues",
+          {
+            action: "opened",
+            issue: { number: 1, title: "t", html_url: "u", body: AT, user: { login: "c" } },
+          },
+          { action: "opened" },
+        ),
+      ],
+      [
+        "issue.labels[].name",
+        msg(
+          "issues",
+          {
+            action: "opened",
+            issue: {
+              number: 1,
+              title: "t",
+              html_url: "u",
+              user: { login: "c" },
+              labels: [{ name: AT }],
+            },
+          },
+          { action: "opened" },
+        ),
+      ],
+      [
+        "release.body",
+        msg(
+          "release",
+          {
+            action: "published",
+            release: {
+              name: "v1",
+              tag_name: "v1",
+              html_url: "u",
+              body: AT,
+              author: { login: "d" },
+            },
+          },
+          { action: "published" },
+        ),
+      ],
+      [
+        "comment.body",
+        msg(
+          "issue_comment",
+          {
+            action: "created",
+            issue: { number: 1, title: "t" },
+            comment: { body: AT, html_url: "u" },
+          },
+          { action: "created" },
+        ),
+      ],
+      [
+        "membership.role",
+        msg(
+          "organization",
+          {
+            action: "member_added",
+            membership: { role: AT, user: { login: "m" } },
+            organization: { login: "o" },
+          },
+          { action: "member_added" },
+        ),
+      ],
     ];
     for (const [field, message] of cases) {
       expect([field, textOf(message).includes(AT)]).toEqual([field, false]);
@@ -696,7 +924,14 @@ describe("buildCard · redundant elements are gone (#16)", () => {
   it("adds no footer note (the repo is already the header subtitle)", () => {
     const events = ["push", "pull_request", "issues", "release", "star", "fork", "deployment"];
     for (const event of events) {
-      const card = buildCard(msg(event, event === "pull_request" ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } } : {}));
+      const card = buildCard(
+        msg(
+          event,
+          event === "pull_request"
+            ? { pull_request: { title: "t", html_url: "u", user: { login: "x" } } }
+            : {},
+        ),
+      );
       const noteTexts = card.elements
         .filter((el) => (el as { tag?: string }).tag === "div")
         .map((el) => (el as { text?: { content?: string } }).text?.content ?? "");
@@ -709,7 +944,14 @@ describe("buildCard · redundant elements are gone (#16)", () => {
     // a literal space, halving the author line's width for nothing. The empty
     // column is nested inside a column_set, so this walk has to recurse.
     const card = buildCard(
-      msg("release", { action: "published", release: { name: "v1", tag_name: "v1", html_url: "u", author: { login: "d" } } }, { action: "published" }),
+      msg(
+        "release",
+        {
+          action: "published",
+          release: { name: "v1", tag_name: "v1", html_url: "u", author: { login: "d" } },
+        },
+        { action: "published" },
+      ),
     );
     const contents: string[] = [];
     const walk = (els: unknown[]): void => {
@@ -732,22 +974,30 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
     // discarded, everything #12/#13/#14 added to the fallback card.
     // `discussion_comment` is used here because it is still a fallback event
     // (`issue_comment` now has a builder of its own, #21).
-    const message = msg("discussion_comment", {
-      action: "created",
-      discussion: { title: "Login broken" },
-      comment: { body: "I can reproduce on Safari", html_url: "u#1" },
-    }, { action: "created" });
+    const message = msg(
+      "discussion_comment",
+      {
+        action: "created",
+        discussion: { title: "Login broken" },
+        comment: { body: "I can reproduce on Safari", html_url: "u#1" },
+      },
+      { action: "created" },
+    );
     const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
     expect(text).toContain("I can reproduce on Safari");
     expect(text).toContain("Login broken");
   });
 
   it("keeps membership details on the fallback card", () => {
-    const message = msg("organization", {
-      action: "member_added",
-      membership: { role: "admin", user: { login: "NEW-MEMBER" } },
-      organization: { login: "someorg" },
-    }, { action: "member_added" });
+    const message = msg(
+      "organization",
+      {
+        action: "member_added",
+        membership: { role: "admin", user: { login: "NEW-MEMBER" } },
+        organization: { login: "someorg" },
+      },
+      { action: "member_added" },
+    );
     const text = elementMarkdown(buildCard(renderFormatted(message, undefined)).elements);
     expect(text).toContain("NEW-MEMBER");
     expect(text).toContain("admin");
@@ -758,11 +1008,15 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
     // template replaced — and therefore discarded — the comment text, parent
     // discussion title and membership details. Configuring a template must not
     // make the card less informative than leaving it unset.
-    const message = msg("discussion_comment", {
-      action: "created",
-      discussion: { title: "Login broken" },
-      comment: { body: "I can reproduce on Safari", html_url: "u#1" },
-    }, { action: "created" });
+    const message = msg(
+      "discussion_comment",
+      {
+        action: "created",
+        discussion: { title: "Login broken" },
+        comment: { body: "I can reproduce on Safari", html_url: "u#1" },
+      },
+      { action: "created" },
+    );
     const text = elementMarkdown(buildCard(renderFormatted(message, "Deploying now")).elements);
     expect(text).toContain("Login broken");
     expect(text).toContain("I can reproduce on Safari");
@@ -782,17 +1036,21 @@ describe("renderFormatted -> buildCard (the production path, #16)", () => {
 
   it("renders the payload body exactly once when a template complements it", () => {
     const body = "This PR implements the login flow.";
-    const message = msg("pull_request", {
-      action: "opened",
-      number: 1,
-      pull_request: {
-        title: "Add login",
-        html_url: "u",
-        body,
-        user: { login: "bob" },
-        requested_reviewers: [{ login: "carol" }],
+    const message = msg(
+      "pull_request",
+      {
+        action: "opened",
+        number: 1,
+        pull_request: {
+          title: "Add login",
+          html_url: "u",
+          body,
+          user: { login: "bob" },
+          requested_reviewers: [{ login: "carol" }],
+        },
       },
-    }, { action: "opened" });
+      { action: "opened" },
+    );
     // A template adding something the card does not render — here the requested
     // reviewers. Re-rendering `pull_request.body` would instead show it twice.
     const template =
@@ -808,15 +1066,19 @@ describe("buildCard · event subject (#17)", () => {
   // direct assertion that the card did not blame the sender.
 
   it("names the org member for `organization` member_added", () => {
-    const text = cardText("organization", {
-      action: "member_added",
-      membership: {
-        state: "active",
-        role: "member",
-        user: { login: "new-member", html_url: "https://github.com/new-member" },
+    const text = cardText(
+      "organization",
+      {
+        action: "member_added",
+        membership: {
+          state: "active",
+          role: "member",
+          user: { login: "new-member", html_url: "https://github.com/new-member" },
+        },
+        organization: { login: "someorg" },
       },
-      organization: { login: "someorg" },
-    }, "member_added");
+      "member_added",
+    );
     expect(text).toContain("new-member");
     expect(text).toContain("https://github.com/new-member");
     expect(text).not.toContain("alice");
@@ -825,12 +1087,16 @@ describe("buildCard · event subject (#17)", () => {
   it("names the invitee for member_invited, which has no membership object", () => {
     // GitHub's member_invited payload has no `membership`; the invitee is in a
     // top-level `user`, which also carries an html_url.
-    const text = cardText("organization", {
-      action: "member_invited",
-      invitation: { login: "hacktocat", email: null, inviter: { login: "inviter-user" } },
-      user: { login: "hacktocat", html_url: "https://github.com/hacktocat" },
-      organization: { login: "someorg" },
-    }, "member_invited");
+    const text = cardText(
+      "organization",
+      {
+        action: "member_invited",
+        invitation: { login: "hacktocat", email: null, inviter: { login: "inviter-user" } },
+        user: { login: "hacktocat", html_url: "https://github.com/hacktocat" },
+        organization: { login: "someorg" },
+      },
+      "member_invited",
+    );
     expect(text).toContain("hacktocat");
     expect(text).toContain("https://github.com/hacktocat");
     expect(text).toContain("inviter-user"); // who sent the invitation
@@ -839,11 +1105,19 @@ describe("buildCard · event subject (#17)", () => {
 
   it("does not print an email-only invitation's address", () => {
     // A card is visible to the whole group; an email is not public information.
-    const text = cardText("organization", {
-      action: "member_invited",
-      invitation: { login: null, email: "someone@example.com", inviter: { login: "inviter-user" } },
-      organization: { login: "someorg" },
-    }, "member_invited");
+    const text = cardText(
+      "organization",
+      {
+        action: "member_invited",
+        invitation: {
+          login: null,
+          email: "someone@example.com",
+          inviter: { login: "inviter-user" },
+        },
+        organization: { login: "someorg" },
+      },
+      "member_invited",
+    );
     expect(text).not.toContain("someone@example.com");
     expect(text).toContain("invited by email");
     expect(text).toContain("inviter-user");
@@ -851,44 +1125,63 @@ describe("buildCard · event subject (#17)", () => {
 
   it("falls back to invitation.login when there is no top-level user", () => {
     // `member_invited` normally carries both; this pins the fallback on its own.
-    const text = cardText("organization", {
-      action: "member_invited",
-      invitation: { login: "invited-login", email: null, inviter: { login: "inviter-user" } },
-      organization: { login: "someorg" },
-    }, "member_invited");
+    const text = cardText(
+      "organization",
+      {
+        action: "member_invited",
+        invitation: { login: "invited-login", email: null, inviter: { login: "inviter-user" } },
+        organization: { login: "someorg" },
+      },
+      "member_invited",
+    );
     expect(text).toContain("invited-login");
     expect(text).not.toContain("alice");
   });
 
   it("names the collaborator for a `member` event", () => {
-    const text = cardText("member", {
-      action: "added",
-      member: { login: "new-collab", html_url: "https://github.com/new-collab" },
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    }, "added");
+    const text = cardText(
+      "member",
+      {
+        action: "added",
+        member: { login: "new-collab", html_url: "https://github.com/new-collab" },
+        repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+      },
+      "added",
+    );
     expect(text).toContain("new-collab");
     expect(text).not.toContain("alice");
   });
 
   it("names the teammate and the team for a `membership` event", () => {
-    const text = cardText("membership", {
-      action: "added",
-      scope: "team",
-      member: { login: "new-teammate" },
-      team: { name: "core-team", html_url: "https://github.com/orgs/someorg/teams/core-team" },
-      organization: { login: "someorg" },
-    }, "added");
+    const text = cardText(
+      "membership",
+      {
+        action: "added",
+        scope: "team",
+        member: { login: "new-teammate" },
+        team: { name: "core-team", html_url: "https://github.com/orgs/someorg/teams/core-team" },
+        organization: { login: "someorg" },
+      },
+      "added",
+    );
     expect(text).toContain("new-teammate");
     expect(text).toContain("core-team");
     expect(text).not.toContain("alice");
   });
 
   it("surfaces the team on a `team` event, which is not about a person", () => {
-    const text = cardText("team", {
-      action: "added_to_repository",
-      team: { name: "platform-team", html_url: "https://github.com/orgs/someorg/teams/platform-team" },
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    }, "added_to_repository");
+    const text = cardText(
+      "team",
+      {
+        action: "added_to_repository",
+        team: {
+          name: "platform-team",
+          html_url: "https://github.com/orgs/someorg/teams/platform-team",
+        },
+        repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+      },
+      "added_to_repository",
+    );
     expect(text).toContain("platform-team");
     // Not a person event, so the actor is the right name here.
     expect(text).toContain("alice");
@@ -896,11 +1189,15 @@ describe("buildCard · event subject (#17)", () => {
   });
 
   it("names the blocked user for `org_block`", () => {
-    const text = cardText("org_block", {
-      action: "blocked",
-      blocked_user: { login: "bad-actor", html_url: "https://github.com/bad-actor" },
-      organization: { login: "someorg" },
-    }, "blocked");
+    const text = cardText(
+      "org_block",
+      {
+        action: "blocked",
+        blocked_user: { login: "bad-actor", html_url: "https://github.com/bad-actor" },
+        organization: { login: "someorg" },
+      },
+      "blocked",
+    );
     expect(text).toContain("bad-actor");
     expect(text).not.toContain("alice");
   });
@@ -908,10 +1205,14 @@ describe("buildCard · event subject (#17)", () => {
   it("says unknown — not the actor — when a person event names nobody", () => {
     // A partial payload must not be reported as "the sender did it": that is
     // how the card used to name the wrong person.
-    const text = cardText("member", {
-      action: "added",
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    }, "added");
+    const text = cardText(
+      "member",
+      {
+        action: "added",
+        repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+      },
+      "added",
+    );
     expect(text).toContain("unknown");
     expect(text).not.toContain("alice");
   });
@@ -933,16 +1234,24 @@ describe("buildCard · event subject (#17)", () => {
     // naming the actor — classifying the whole event as a person event dropped
     // the only information the payload had. Real payloads, per GitHub's
     // published examples.
-    const renamed = cardText("organization", {
-      changes: { login: { from: "Octocoders" } },
-      organization: { login: "someorg" },
-    }, "renamed");
+    const renamed = cardText(
+      "organization",
+      {
+        changes: { login: { from: "Octocoders" } },
+        organization: { login: "someorg" },
+      },
+      "renamed",
+    );
     expect(renamed).toContain("alice");
     expect(renamed).not.toContain("unknown");
 
-    const deleted = cardText("organization", {
-      organization: { login: "someorg" },
-    }, "deleted");
+    const deleted = cardText(
+      "organization",
+      {
+        organization: { login: "someorg" },
+      },
+      "deleted",
+    );
     expect(deleted).toContain("alice");
     expect(deleted).not.toContain("unknown");
   });
@@ -950,9 +1259,13 @@ describe("buildCard · event subject (#17)", () => {
   it("still says unknown for a member action that names nobody", () => {
     // The complement of the test above: within the member-* actions a missing
     // subject must not fall back to the actor.
-    const text = cardText("organization", {
-      organization: { login: "someorg" },
-    }, "member_added");
+    const text = cardText(
+      "organization",
+      {
+        organization: { login: "someorg" },
+      },
+      "member_added",
+    );
     expect(text).toContain("unknown");
     expect(text).not.toContain("alice");
   });
@@ -961,11 +1274,15 @@ describe("buildCard · event subject (#17)", () => {
     // GitHub's own member_added example carries state "pending". The login is
     // deliberately unrelated to the word "pending" so this cannot pass by
     // substring accident.
-    const text = cardText("organization", {
-      action: "member_added",
-      membership: { state: "pending", role: "member", user: { login: "invitee-login" } },
-      organization: { login: "someorg" },
-    }, "member_added");
+    const text = cardText(
+      "organization",
+      {
+        action: "member_added",
+        membership: { state: "pending", role: "member", user: { login: "invitee-login" } },
+        organization: { login: "someorg" },
+      },
+      "member_added",
+    );
     expect(text).toContain("invitee-login");
     expect(text).toContain("pending");
   });
@@ -973,12 +1290,16 @@ describe("buildCard · event subject (#17)", () => {
   it("surfaces the previous permission without presenting it as current", () => {
     // `member` action `edited` carries only changes.old_permission.from; the
     // new permission is not in the payload.
-    const text = cardText("member", {
-      action: "edited",
-      member: { login: "octocat" },
-      changes: { old_permission: { from: "write" } },
-      repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
-    }, "edited");
+    const text = cardText(
+      "member",
+      {
+        action: "edited",
+        member: { login: "octocat" },
+        changes: { old_permission: { from: "write" } },
+        repository: { full_name: "org/repo", html_url: "https://github.com/org/repo" },
+      },
+      "edited",
+    );
     expect(text).toContain("write");
     expect(text).toContain("previously");
   });
@@ -992,29 +1313,53 @@ describe("buildCard · event subject (#17)", () => {
 
 describe("buildCard · labels (#17)", () => {
   it("states how many labels an issue card left out", () => {
-    const text = cardText("issues", {
-      action: "opened",
-      issue: { number: 1, title: "t", html_url: "u", user: { login: "c" }, labels: someLabels(10) },
-    }, "opened");
+    const text = cardText(
+      "issues",
+      {
+        action: "opened",
+        issue: {
+          number: 1,
+          title: "t",
+          html_url: "u",
+          user: { login: "c" },
+          labels: someLabels(10),
+        },
+      },
+      "opened",
+    );
     expect(text).toContain("label-0");
     expect(text).not.toContain("label-3"); // only three pills are shown
     expect(text).toContain("+7 more");
   });
 
   it("shows no remainder when every label fits", () => {
-    const text = cardText("issues", {
-      action: "opened",
-      issue: { number: 1, title: "t", html_url: "u", user: { login: "c" }, labels: someLabels(2) },
-    }, "opened");
+    const text = cardText(
+      "issues",
+      {
+        action: "opened",
+        issue: {
+          number: 1,
+          title: "t",
+          html_url: "u",
+          user: { login: "c" },
+          labels: someLabels(2),
+        },
+      },
+      "opened",
+    );
     expect(text).not.toContain("more");
   });
 
   it("shows labels on a PR card, which showed none at all", () => {
-    const text = cardText("pull_request", {
-      action: "opened",
-      number: 1,
-      pull_request: { title: "t", html_url: "u", user: { login: "x" }, labels: someLabels(2) },
-    }, "opened");
+    const text = cardText(
+      "pull_request",
+      {
+        action: "opened",
+        number: 1,
+        pull_request: { title: "t", html_url: "u", user: { login: "x" }, labels: someLabels(2) },
+      },
+      "opened",
+    );
     expect(text).toContain("label-0");
     expect(text).toContain("label-1");
   });
@@ -1049,10 +1394,7 @@ describe("buildCard · navigation buttons (#26)", () => {
    * coincidence.
    */
   const REPO_URL = "https://github.com/org/repo";
-  const FIXTURES: Record<
-    string,
-    { payload: Record<string, unknown>; action?: string }
-  > = {
+  const FIXTURES: Record<string, { payload: Record<string, unknown>; action?: string }> = {
     push: {
       payload: {
         ref: "refs/heads/main",
@@ -1149,10 +1491,7 @@ describe("buildCard · navigation buttons (#26)", () => {
       expect([event, raw.length]).toEqual([event, buttons.length]);
       expect([event, buttons.every((b) => b.url.length > 0)]).toEqual([event, true]);
       // No two buttons open the same target.
-      expect([event, new Set(buttons.map((b) => b.url)).size]).toEqual([
-        event,
-        buttons.length,
-      ]);
+      expect([event, new Set(buttons.map((b) => b.url)).size]).toEqual([event, buttons.length]);
     }
   });
 
@@ -1224,7 +1563,9 @@ describe("buildCard · navigation buttons (#26)", () => {
 
   it("fork keeps its single fork button — no View Repo is added", () => {
     expect(
-      buttonsOf("fork", { forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" } }),
+      buttonsOf("fork", {
+        forkee: { full_name: "eve/repo", html_url: "https://github.com/eve/repo" },
+      }),
     ).toEqual([{ label: "View Fork", url: "https://github.com/eve/repo" }]);
   });
 
@@ -1260,7 +1601,10 @@ describe("buildCard · navigation buttons (#26)", () => {
   it("drops View Release instead of opening the repository under that label", () => {
     const buttons = buttonsOf(
       "release",
-      { action: "published", release: { name: "v1.0.0", tag_name: "v1.0.0", author: { login: "d" } } },
+      {
+        action: "published",
+        release: { name: "v1.0.0", tag_name: "v1.0.0", author: { login: "d" } },
+      },
       "published",
     );
     expect(buttons).toEqual([{ label: "View Repo", url: REPO_URL }]);
@@ -1282,7 +1626,12 @@ describe("buildCard · navigation buttons (#26)", () => {
       "issues",
       {
         action: "opened",
-        issue: { number: 8, title: "Bug", html_url: "https://github.com/org/repo/issues/8", user: { login: "c" } },
+        issue: {
+          number: 8,
+          title: "Bug",
+          html_url: "https://github.com/org/repo/issues/8",
+          user: { login: "c" },
+        },
       },
       "opened",
     );
@@ -1359,10 +1708,7 @@ describe("buildCard · navigation buttons (#26)", () => {
         comment: { html_url: "https://github.com/org/repo/issues/1#issuecomment-2", body: "hi" },
         repository: { full_name: "org/repo", html_url: REPO_URL },
       };
-      expect([event, prodCard(event, payload, "created").header.template]).toEqual([
-        event,
-        "grey",
-      ]);
+      expect([event, prodCard(event, payload, "created").header.template]).toEqual([event, "grey"]);
     }
   });
 

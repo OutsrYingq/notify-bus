@@ -18,7 +18,7 @@
 
 ## 问题在哪
 
-团队在 GitHub 上协作，日常沟通用飞书。每次 push、PR、issue、release、star、fork —— 你都希望群里能及时收到提醒。现有方案要么是死板的 GitHub Action，要么是纯命令行，要么是不让你掌控数据和路由规则的 SaaS。没有一个能在一个自部署的盒子里同时给你 **可配置管道** *和* **可视化管理后台**。
+团队在 GitHub 上协作，日常沟通用飞书。每次 push、PR、issue、release、star、fork —— 你都希望群里能及时收到提醒。现有方案要么是死板的 GitHub Action，要么是纯命令行，要么是不让你掌控数据和路由规则的 SaaS。没有一个能在一个自部署的盒子里同时给你 **可配置管道** _和_ **可视化管理后台**。
 
 ## notify-bus 怎么做
 
@@ -35,14 +35,14 @@
                                                     │  （今天飞书；下一步 Slack / 钉钉 / 企业微信 / Discord）
 ```
 
-- **Webhook 进，通知出。** 用原始 body 校验 GitHub 的 HMAC-SHA256 签名，把事件与你的路由匹配，渲染配置好的模板，再分发到渠道适配器。*（可配置的中间件管道 —— Filter / Enricher / Template —— 属于 M2 里程碑，尚未实现。）*
+- **Webhook 进，通知出。** 用原始 body 校验 GitHub 的 HMAC-SHA256 签名，把事件与你的路由匹配，渲染配置好的模板，再分发到渠道适配器。_（可配置的中间件管道 —— Filter / Enricher / Template —— 属于 M2 里程碑，尚未实现。）_
 - **天生多渠道，不是事后补的。** 新渠道只需实现 `ChannelAdapter` 接口。飞书是第一个适配器；路由和配置层与渠道无关。
 - **改配置不用重新部署。** 内置管理后台（React + Vite + Tailwind）通过 REST API 编辑路由、渠道、模板 —— 底层是 `bun:sqlite`。调规则不用再走 YAML 往返。
-- **一个镜像，一个进程。** 单个 Bun 进程同时提供 API *和* 构建好的前端。一个 Docker 容器，一个数据卷。仓库是 Bun workspace monorepo（`packages/server` + `packages/web`），构建产物汇入同一个镜像。
+- **一个镜像，一个进程。** 单个 Bun 进程同时提供 API _和_ 构建好的前端。一个 Docker 容器，一个数据卷。仓库是 Bun workspace monorepo（`packages/server` + `packages/web`），构建产物汇入同一个镜像。
 
 ## 5 分钟体验
 
-*(下面的步骤现在就能用：GitHub webhook 进，飞书卡片出。可配置的中间件管道属于 M2，尚未实现。)*
+_(下面的步骤现在就能用：GitHub webhook 进，飞书卡片出。可配置的中间件管道属于 M2，尚未实现。)_
 
 ```bash
 # 本地运行
@@ -58,14 +58,14 @@ docker compose up -d       # API + 构建好的前端都在 :3000
 
 ## 跟别人有什么不同
 
-| | GitHub Action / 裸 webhook | SaaS 通知器 | **notify-bus** |
-|---|---|---|---|
-| **自部署 / 数据自主** | ✅ | ❌ | ✅ |
-| **可配置管道** | ❌（改规则要改代码） | 部分 | ✅ Filter / Enricher / Template |
-| **可视化管理后台** | ❌ | ✅ | ✅ |
-| **多渠道** | 每个渠道手搓 | 按套餐限渠道 | ✅ `ChannelAdapter` 接口 |
-| **按事件类型配模板** | 写死 | 受限 | ✅ Handlebars，按事件类型 |
-| **License** | 不定 | 闭源 | ✅ MIT |
+|                       | GitHub Action / 裸 webhook | SaaS 通知器  | **notify-bus**                  |
+| --------------------- | -------------------------- | ------------ | ------------------------------- |
+| **自部署 / 数据自主** | ✅                         | ❌           | ✅                              |
+| **可配置管道**        | ❌（改规则要改代码）       | 部分         | ✅ Filter / Enricher / Template |
+| **可视化管理后台**    | ❌                         | ✅           | ✅                              |
+| **多渠道**            | 每个渠道手搓               | 按套餐限渠道 | ✅ `ChannelAdapter` 接口        |
+| **按事件类型配模板**  | 写死                       | 受限         | ✅ Handlebars，按事件类型       |
+| **License**           | 不定                       | 闭源         | ✅ MIT                          |
 
 ## 架构概览
 
@@ -95,6 +95,7 @@ docker compose up -d       # API + 构建好的前端都在 :3000
 ```
 
 运行时合并两个配置源：
+
 - **YAML**（`config.yaml`）—— 种子/引导配置，人写友好，支持热更新。
 - **SQLite**（`data.db`）—— 路由、渠道、模板、日志的真相源；通过管理后台 / REST API 编辑。
 

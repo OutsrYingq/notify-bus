@@ -2,11 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { renderFormatted } from "./index";
 import type { EventMessage } from "../../types";
 
-function msg(
-  event: string,
-  payload: Record<string, unknown> = {},
-  action?: string,
-): EventMessage {
+function msg(event: string, payload: Record<string, unknown> = {}, action?: string): EventMessage {
   return {
     id: "evt-1",
     event,
@@ -37,9 +33,7 @@ describe("renderFormatted", () => {
   });
 
   it("still sets formatted.title to the event and repo", () => {
-    expect(renderFormatted(msg("star"), undefined).formatted?.title).toBe(
-      "star · org/repo",
-    );
+    expect(renderFormatted(msg("star"), undefined).formatted?.title).toBe("star · org/repo");
   });
 });
 
@@ -74,9 +68,7 @@ describe("renderFormatted · template safety boundary (#16)", () => {
       msg("x", { v: "green" }),
       '<text_tag color="{{payload.v}}">label</text_tag> & literal',
     );
-    expect(out.formatted?.body).toBe(
-      '<text_tag color="green">label</text_tag> & literal',
-    );
+    expect(out.formatted?.body).toBe('<text_tag color="green">label</text_tag> & literal');
   });
 
   it("still allows raw output through triple braces", () => {
@@ -88,8 +80,6 @@ describe("renderFormatted · template safety boundary (#16)", () => {
   it("does not alter the template's own whitespace", () => {
     // trim() decides only whether a template was configured at all; it must not
     // change what that template renders.
-    expect(renderFormatted(msg("x"), "\n  HELLO  \n").formatted?.body).toBe(
-      "\n  HELLO  \n",
-    );
+    expect(renderFormatted(msg("x"), "\n  HELLO  \n").formatted?.body).toBe("\n  HELLO  \n");
   });
 });

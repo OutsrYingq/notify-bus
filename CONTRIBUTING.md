@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing to notify-bus! This doc explains how we work — the workflow, the conventions, and what to expect.
 
-> 🤖 **Using an AI coding assistant (Cursor / Claude Code / Codex)?** Also read [**AGENTS.md**](./AGENTS.md) — it tells the agent how to work *in this specific repo* (commands, layout, boundaries). This doc is for humans; AGENTS.md is for machines.
+> 🤖 **Using an AI coding assistant (Cursor / Claude Code / Codex)?** Also read [**AGENTS.md**](./AGENTS.md) — it tells the agent how to work _in this specific repo_ (commands, layout, boundaries). This doc is for humans; AGENTS.md is for machines.
 
 ---
 
@@ -43,21 +43,21 @@ cp .env.example .env   # then set GITHUB_WEBHOOK_SECRET
 
 **Common commands** (run from the repo root — they cover both packages)
 
-| Task | Command |
-|---|---|
-| Run server + frontend (dev) | `bun run dev` |
-| Run server only (dev) | `bun run dev:server` |
-| Run frontend only (dev) | `bun run dev:web` |
-| Run tests | `bun test` |
-| Lint | `bun run lint` (oxlint) |
-| Format | `bun run fmt` (oxfmt) |
-| Typecheck | `bun run typecheck` (`tsc -b` — both packages) |
-| Build frontend | `bun run build` |
-| Start production server | `bun run start` |
+| Task                        | Command                                        |
+| --------------------------- | ---------------------------------------------- |
+| Run server + frontend (dev) | `bun run dev`                                  |
+| Run server only (dev)       | `bun run dev:server`                           |
+| Run frontend only (dev)     | `bun run dev:web`                              |
+| Run tests                   | `bun test`                                     |
+| Lint                        | `bun run lint` (oxlint)                        |
+| Format                      | `bun run fmt` (oxfmt)                          |
+| Typecheck                   | `bun run typecheck` (`tsc -b` — both packages) |
+| Build frontend              | `bun run build`                                |
+| Start production server     | `bun run start`                                |
 
 ## How we work: issue-driven, design-first
 
-notify-bus uses **issue-driven development** with a **design-first** rule for anything that touches the product surface. Every change starts with an issue; changes to the pipeline interface, channel adapter interface, REST API shape, or the `EventMessage` contract need design alignment *before* code.
+notify-bus uses **issue-driven development** with a **design-first** rule for anything that touches the product surface. Every change starts with an issue; changes to the pipeline interface, channel adapter interface, REST API shape, or the `EventMessage` contract need design alignment _before_ code.
 
 **The flow at a glance:**
 
@@ -107,12 +107,12 @@ Before opening a new issue, please search existing ones to avoid duplicates.
 
 **Branch naming:**
 
-| Type | Pattern | Example |
-|---|---|---|
-| Feature | `feat/<scope>-<short>` | `feat/feishu-signing` |
-| Fix | `fix/<scope>-<short>` | `fix/webhook-raw-body` |
-| Docs | `docs/<topic>` | `docs/readme-refresh` |
-| Chore | `chore/<topic>` | `chore/deps-bump` |
+| Type    | Pattern                | Example                |
+| ------- | ---------------------- | ---------------------- |
+| Feature | `feat/<scope>-<short>` | `feat/feishu-signing`  |
+| Fix     | `fix/<scope>-<short>`  | `fix/webhook-raw-body` |
+| Docs    | `docs/<topic>`         | `docs/readme-refresh`  |
+| Chore   | `chore/<topic>`        | `chore/deps-bump`      |
 
 ## Commit conventions
 
@@ -128,17 +128,17 @@ We use [Conventional Commits](https://www.conventionalcommits.org/). Every commi
 
 ### Type (required)
 
-| Type | Use for |
-|---|---|
-| `feat` | A new feature |
-| `fix` | A bug fix |
-| `perf` | A change that improves performance |
+| Type       | Use for                                                   |
+| ---------- | --------------------------------------------------------- |
+| `feat`     | A new feature                                             |
+| `fix`      | A bug fix                                                 |
+| `perf`     | A change that improves performance                        |
 | `refactor` | A code change that neither fixes a bug nor adds a feature |
-| `docs` | Documentation only |
-| `test` | Adding or correcting tests |
-| `build` | Changes to the build system or dependencies |
-| `ci` | Changes to CI configuration |
-| `chore` | Routine maintenance, tooling, repo config |
+| `docs`     | Documentation only                                        |
+| `test`     | Adding or correcting tests                                |
+| `build`    | Changes to the build system or dependencies               |
+| `ci`       | Changes to CI configuration                               |
+| `chore`    | Routine maintenance, tooling, repo config                 |
 
 ### Scope (optional but encouraged)
 
@@ -166,11 +166,13 @@ A short noun identifying the area — e.g. `webhook`, `pipeline`, `adapter`, `ap
 ### Examples
 
 **Simple (most commits):**
+
 ```
 docs(readme): add 5-minute tour section
 ```
 
 **With body:**
+
 ```
 fix(webhook): capture raw body before json parse for signature
 
@@ -180,6 +182,7 @@ Elysia's body parser touches it.
 ```
 
 **Closing an issue:**
+
 ```
 feat(adapter): add feishu adapter with hmac signing
 
@@ -191,11 +194,13 @@ Closes #12
 Because we **squash-merge**, the PR title becomes the commit message on `main`. So PR titles **must follow the same Conventional Commits format** as commits.
 
 ✅ Good:
+
 - `feat(adapter): add feishu adapter with hmac signing`
 - `fix(webhook): capture raw body before json parse`
 - `docs: refresh readme`
 
 ❌ Avoid:
+
 - `update` (no type, no detail)
 - `fixed the bug` (no type, vague)
 - `Feat: added a new adapter!!!` (uppercase, punctuation, vague)

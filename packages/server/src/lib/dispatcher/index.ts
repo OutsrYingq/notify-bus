@@ -35,11 +35,11 @@ export async function dispatch(
 ): Promise<DispatchResult> {
   const adapter = adapters.get(channel.type);
   if (!adapter) {
-  return {
-    status: "fail",
-    channelId,
-    error: `no adapter registered for channel type "${channel.type}"`,
-  };
+    return {
+      status: "fail",
+      channelId,
+      error: `no adapter registered for channel type "${channel.type}"`,
+    };
   }
 
   const result = await adapter.send(message, seedChannelToConfig(channel));
