@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { buildCard, type FeishuCard } from "./feishu-cards";
+import { buildCard } from "./feishu-cards";
+import type { CardElement, FeishuCard } from "./feishu-card-kit";
 import { renderFormatted } from "../render";
 import type { EventMessage } from "../../types";
 
@@ -34,13 +35,40 @@ function text(result: FeishuCard): string {
     .join("\n");
 }
 
-function buttons(result: FeishuCard): { label: string; url: string }[] {
-  return result.elements
-    .filter((element) => element.tag === "button")
-    .map((element) => ({
-      label: (element.text as { content: string }).content,
-      url: (element.behaviors as { type: string; default_url: string }[])[0]!.default_url,
-    }));
+function buttons(result: FeishuCard): { label: string; url: string; type: string }[] {
+  const found: { label: string; url: string; type: string }[] = [];
+  for (const element of result.elements) {
+    if (element.tag === "button") {
+      const button = element as {
+        text?: { content?: string };
+        type?: string;
+        behaviors?: { default_url?: string }[];
+      };
+      found.push({
+        label: button.text?.content ?? "",
+        url: button.behaviors?.[0]?.default_url ?? "",
+        type: button.type ?? "",
+      });
+    }
+    if (element.tag === "column_set") {
+      for (const column of (element.columns as { elements?: CardElement[] }[] | undefined) ?? []) {
+        for (const nested of column.elements ?? []) {
+          if (nested.tag !== "button") continue;
+          const button = nested as {
+            text?: { content?: string };
+            type?: string;
+            behaviors?: { default_url?: string }[];
+          };
+          found.push({
+            label: button.text?.content ?? "",
+            url: button.behaviors?.[0]?.default_url ?? "",
+            type: button.type ?? "",
+          });
+        }
+      }
+    }
+  }
+  return found;
 }
 
 function reviewPayload(state: string, body: string | null | undefined = "Looks good") {
@@ -112,7 +140,12 @@ describe("result cards · pull_request_review (#20)", () => {
       expect(text(result)).toContain("reviewer");
       expect(text(result)).toContain("`feature` → `main`");
       expect(buttons(result)).toEqual([
-        { label: "View Review", url: "https://github.com/octo/repo/pull/42#pullrequestreview-7" },
+        {
+          label: "View Review",
+          url: "https://github.com/octo/repo/pull/42#pullrequestreview-7",
+          type: "primary",
+        },
+        { label: "View Repo", url: repoUrl, type: "default" },
       ]);
     });
   }
@@ -136,7 +169,7 @@ describe("result cards · pull_request_review (#20)", () => {
     const payload = reviewPayload("approved");
     payload.review.html_url = "";
     const result = card("pull_request_review", payload, "submitted", "Extra {{event}}");
-    expect(buttons(result)).toEqual([]);
+    expect(buttons(result)).toEqual([{ label: "View Repo", url: repoUrl, type: "default" }]);
     expect(text(result)).toContain("Looks good");
     expect(text(result)).toContain("Extra pull_request_review");
   });
@@ -150,6 +183,9 @@ describe("result cards · workflow_run (#20)", () => {
     ["action_required", "orange"],
     ["timed_out", "red"],
     ["startup_failure", "red"],
+    ["neutral", "orange"],
+    ["stale", "grey"],
+    ["skipped", "grey"],
   ] as const) {
     it(`shows ${state} without conflating it with running or success`, () => {
       const result = card("workflow_run", runPayload(state), "completed");
@@ -159,8 +195,10 @@ describe("result cards · workflow_run (#20)", () => {
       expect(text(result)).toContain("Run #81 · attempt 2");
       expect(text(result)).toContain("`main`");
       expect(text(result)).toContain("`abcdef1`");
+      expect(result.header.title).toBe("⚙️ CI");
       expect(buttons(result)).toEqual([
-        { label: "View Run", url: "https://github.com/octo/repo/actions/runs/81" },
+        { label: "View Run", url: "https://github.com/octo/repo/actions/runs/81", type: "primary" },
+        { label: "View Repo", url: repoUrl, type: "default" },
       ]);
     });
   }
@@ -182,6 +220,7 @@ describe("result cards · workflow_run (#20)", () => {
       payload.workflow_run.name = name;
       payload.workflow_run.display_title = display;
       payload.workflow_run.path = path;
+      expect(card("workflow_run", payload).header.title).toBe(`⚙️ ${expected}`);
       expect(text(card("workflow_run", payload))).toContain(`### ${expected}`);
     });
   }
@@ -189,7 +228,9 @@ describe("result cards · workflow_run (#20)", () => {
   it("does not fabricate a run URL", () => {
     const payload = runPayload("success");
     payload.workflow_run.html_url = "";
-    expect(buttons(card("workflow_run", payload))).toEqual([]);
+    expect(buttons(card("workflow_run", payload))).toEqual([
+      { label: "View Repo", url: repoUrl, type: "default" },
+    ]);
   });
 });
 
@@ -212,7 +253,8 @@ describe("result cards · deployment_status (#20)", () => {
       expect(text(result)).toContain("Deployed &#60;now&#62;");
       expect(text(result)).not.toContain("deploy-bot");
       expect(buttons(result)).toEqual([
-        { label: "View Environment", url: "https://example.com/environment" },
+        { label: "View Environment", url: "https://example.com/environment", type: "primary" },
+        { label: "View Repo", url: repoUrl, type: "default" },
       ]);
     });
   }
@@ -227,18 +269,23 @@ describe("result cards · deployment_status (#20)", () => {
     const payload = deploymentPayload("success");
     payload.deployment_status.environment_url = " ";
     expect(buttons(card("deployment_status", payload))).toEqual([
-      { label: "View Logs", url: "https://example.com/log" },
+      { label: "View Logs", url: "https://example.com/log", type: "primary" },
+      { label: "View Repo", url: repoUrl, type: "default" },
     ]);
     payload.deployment_status.log_url = "";
     expect(buttons(card("deployment_status", payload))).toEqual([
-      { label: "View Target", url: "https://example.com/target" },
+      { label: "View Target", url: "https://example.com/target", type: "primary" },
+      { label: "View Repo", url: repoUrl, type: "default" },
     ]);
     payload.deployment_status.target_url = "";
     expect(buttons(card("deployment_status", payload))).toEqual([
-      { label: "View Run", url: "https://github.com/octo/repo/actions/runs/81" },
+      { label: "View Run", url: "https://github.com/octo/repo/actions/runs/81", type: "primary" },
+      { label: "View Repo", url: repoUrl, type: "default" },
     ]);
     payload.workflow_run.html_url = "";
-    expect(buttons(card("deployment_status", payload))).toEqual([]);
+    expect(buttons(card("deployment_status", payload))).toEqual([
+      { label: "View Repo", url: repoUrl, type: "default" },
+    ]);
   });
 
   it("treats inactive defensively without misreporting success", () => {
