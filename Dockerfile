@@ -6,7 +6,7 @@
 # --- Stage 1: build the frontend -----------------------------------------
 # Workspace install: a single `bun install` at root installs ALL packages
 # (server + web), so no separate `bun --cwd web install` is needed.
-FROM oven/bun:1.3 AS web-builder
+FROM oven/bun:1.4 AS web-builder
 WORKDIR /app
 
 # Copy all three manifests + lockfile first for cache-friendly layering.
@@ -23,7 +23,7 @@ COPY packages/server/src/ packages/server/src/
 RUN cd packages/web && bun run build
 
 # --- Stage 2: assemble the runtime ---------------------------------------
-FROM oven/bun:1.3 AS runtime
+FROM oven/bun:1.4 AS runtime
 WORKDIR /app
 
 # Runtime deps only (--production prunes devDependencies).
