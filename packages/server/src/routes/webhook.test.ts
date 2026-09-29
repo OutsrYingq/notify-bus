@@ -50,6 +50,15 @@ const PUSH_BODY = JSON.stringify({
   ref: "refs/heads/main",
 });
 
+/** A push body carrying the repository's own default branch. */
+function pushBody(ref: string): string {
+  return JSON.stringify({
+    ref,
+    repository: { full_name: "org/repo", html_url: "https://gh/o/r", default_branch: "main" },
+    sender: { login: "alice", avatar_url: "" },
+  });
+}
+
 async function postWebhook(
   app: { handle: (req: Request) => Promise<Response> },
   body: string,
@@ -248,6 +257,78 @@ describe("webhook route with explicit exclusions", () => {
       route: "quiet",
       reason: "exclude_event",
     });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("webhook route with a payload condition", () => {
+  const pushConfig: SeedConfig = {
+    channels: config.channels,
+    routes: [
+      {
+        name: "default-branch-only",
+        match_repo: "*",
+        match_event: "push",
+        match_payload: [{ ref: "refs/heads/$default_branch" }],
+        target_channel: "team",
+      },
+    ],
+  };
+
+  function appFor() {
+    const { adapter, calls } = makeFakeAdapter("success");
+    return {
+      app: buildWebhookRoute({
+        config: pushConfig,
+        adapters: new Map([["feishu", adapter]]),
+        secret: SECRET,
+      }),
+      calls,
+    };
+  }
+
+  it("returns ignored with the payload reason and does not dispatch", async () => {
+    const { app, calls } = appFor();
+    const body = pushBody("refs/heads/feature/x");
+    const { status, json } = await postWebhook(app, body, {
+      "x-github-event": "push",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(status).toBe(200);
+    expect(json).toMatchObject({
+      status: "ignored",
+      event: "push",
+      route: "default-branch-only",
+      reason: "match_payload",
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("dispatches a push the condition covers", async () => {
+    const { app, calls } = appFor();
+    const body = pushBody("refs/heads/main");
+    const { json } = await postWebhook(app, body, {
+      "x-github-event": "push",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(json).toMatchObject({ status: "success", route: "default-branch-only" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("still reports an event no route names as no_route", async () => {
+    // The other half of the distinction: nothing wanted this event at all,
+    // which must not read as a policy refusal.
+    const { app, calls } = appFor();
+    const body = JSON.stringify({
+      action: "created",
+      repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
+      sender: { login: "alice", avatar_url: "" },
+    });
+    const { json } = await postWebhook(app, body, {
+      "x-github-event": "issues",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(json).toMatchObject({ status: "no_route", event: "issues" });
     expect(calls).toHaveLength(0);
   });
 });

@@ -290,17 +290,20 @@ describe("matchRoute", () => {
     expect(resolveRoute(config, event({ event: "create" }))).toEqual({ kind: "no_route" });
   });
 
-  it("ships a quiet event whitelist in config.example.yaml", () => {
+  it("ships three non-overlapping routes in config.example.yaml", () => {
     const example = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
-    expect(example?.routes?.[0]?.match_event).toBe("push,pull_request,issues,release");
     if (!example) throw new Error("Expected the shipped example config to load");
 
-    for (const eventType of ["push", "pull_request", "issues", "release"]) {
-      expect(resolveRoute(example, event({ event: eventType }))).toMatchObject({
-        kind: "matched",
-        match: { route: { name: "core-events-to-team" }, channel: { name: "team-feishu" } },
-      });
-    }
+    // One policy per route, over mutually exclusive event types — the shape
+    // issue #34 defines, and the reason no priority ordering is needed between
+    // them. What each route does with the events it names is covered in
+    // match-payload.test.ts.
+    expect((example.routes ?? []).map((route) => [route.name, route.match_event])).toEqual([
+      ["pushes-to-team", "push"],
+      ["issues-to-team", "issues"],
+      ["pull-request-release-to-team", "pull_request,release"],
+    ]);
+
     for (const eventType of ["create", "status", "check_run"]) {
       expect(resolveRoute(example, event({ event: eventType }))).toEqual({ kind: "no_route" });
     }

@@ -23,6 +23,16 @@ export interface SeedChannel {
   enabled?: boolean;
 }
 
+/**
+ * One AND-clause of a route's payload condition: a dotted path into the raw
+ * GitHub payload, mapped to the value that path must have.
+ *
+ * The expected value is compared as text, so YAML's unquoted `true` matches a
+ * `true` payload field and `1` matches `1`. `*` stands for any run of
+ * characters and `$default_branch` for `payload.repository.default_branch`.
+ */
+export type PayloadCondition = Record<string, string | number | boolean>;
+
 /** A route declared in the YAML seed config. */
 export interface SeedRoute {
   name: string;
@@ -34,6 +44,15 @@ export interface SeedRoute {
   match_action?: string;
   /** Route-local blacklist of actions (comma-separated). Takes precedence over match_action for this route. */
   exclude_action?: string;
+  /**
+   * Route-local payload condition, for what `match_action` cannot express —
+   * a branch, a CI conclusion, a deployment state. Clauses are OR'd (one clause
+   * per situation the route delivers) and the keys inside a clause are AND'd.
+   * A single clause may be written without the list wrapper. Omitted = no
+   * condition, so routes written before this field keep their behavior.
+   * See {@link matchPayloadConditions}.
+   */
+  match_payload?: PayloadCondition | PayloadCondition[];
   target_channel: string; // by name, resolved to a SeedChannel at match time
   priority?: number;
   enabled?: boolean;
@@ -90,6 +109,78 @@ function matchList(list: string[] | undefined, value: string | undefined): boole
   return list.includes(value);
 }
 
+/** A clause value that means "the repository's default branch". */
+const DEFAULT_BRANCH_TOKEN = "$default_branch";
+
+/** Escape a literal so it survives `new RegExp`. */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Match a value against a pattern where `*` stands for any run of characters.
+ * Without a `*` this is an exact comparison. */
+function matchGlob(pattern: string, value: string): boolean {
+  const source = pattern.split("*").map(escapeRegExp).join(".*");
+  return new RegExp(`^${source}$`).test(value);
+}
+
+/** Read a dotted path out of the raw payload. `undefined` when absent. */
+function readPayloadPath(payload: Record<string, unknown>, path: string): unknown {
+  let current: unknown = payload;
+  for (const key of path.split(".")) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+/**
+ * Whether every key in one clause holds.
+ *
+ * A path that is absent, null, or holds an object or array never matches —
+ * "missing" must not read as "condition satisfied". GitHub omits fields between
+ * payload versions, and silently delivering on a missing `deleted` or
+ * `conclusion` is the failure this gate exists to prevent.
+ */
+function matchesClause(clause: PayloadCondition, payload: Record<string, unknown>): boolean {
+  return Object.entries(clause).every(([path, value]) => {
+    let expected = String(value);
+    if (expected.includes(DEFAULT_BRANCH_TOKEN)) {
+      const defaultBranch = readPayloadPath(payload, "repository.default_branch");
+      // A payload without a usable default branch cannot satisfy the clause.
+      // Falling back to `main` would silently subscribe every repo whose
+      // default branch is named something else.
+      if (typeof defaultBranch !== "string" || defaultBranch === "") return false;
+      expected = expected.replaceAll(DEFAULT_BRANCH_TOKEN, defaultBranch);
+    }
+    const actual = readPayloadPath(payload, path);
+    // `null` reports itself as an object, so this one check covers it, an array
+    // and a nested object alike.
+    if (actual === undefined || typeof actual === "object") return false;
+    return matchGlob(expected, String(actual));
+  });
+}
+
+/**
+ * Whether an event satisfies a route's payload condition.
+ *
+ * Clauses are OR'd, keys inside a clause are AND'd. The OR is load-bearing for
+ * the shipped push route, which delivers "a newly created branch" and "an
+ * update to the default branch" as two clauses; an AND-only field would force
+ * that policy into two routes. An absent condition — or an empty list — accepts
+ * everything, so routes written before this field keep matching their whole
+ * event domain.
+ */
+function matchPayloadConditions(
+  condition: PayloadCondition | PayloadCondition[] | undefined,
+  payload: Record<string, unknown>,
+): boolean {
+  if (condition === undefined) return true;
+  const clauses = Array.isArray(condition) ? condition : [condition];
+  if (clauses.length === 0) return true;
+  return clauses.some((clause) => matchesClause(clause, payload));
+}
+
 /** The result of matching an event to a route: the target channel to dispatch to. */
 export interface RouteMatch {
   route: SeedRoute;
@@ -98,7 +189,7 @@ export interface RouteMatch {
 
 interface IgnoredRoute {
   route: SeedRoute;
-  reason: "exclude_event" | "exclude_action";
+  reason: "exclude_event" | "exclude_action" | "match_payload";
 }
 
 type RouteDecision =
@@ -109,9 +200,12 @@ type RouteDecision =
 /**
  * Resolve an event against routes in priority order.
  *
- * Exclusions are route-local: an excluded high-priority route falls through so
- * a later route may still accept the event. An `ignored` decision is returned
- * only when no later route accepts an explicit event/action exclusion.
+ * Every route-local gate is permissive to the rest of the chain: a route that
+ * excludes an event or action, or whose payload condition does not hold, falls
+ * through so a later route may still accept the event. An `ignored` decision is
+ * returned only when no later route accepts what an earlier one rejected, and
+ * its `reason` names the field that rejected it, so a policy miss stays
+ * distinguishable from an event no route ever wanted (`no_route`).
  */
 export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDecision {
   const channels = config.channels ?? [];
@@ -145,6 +239,14 @@ export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDeci
     const excludedActions = splitCsv(route.exclude_action);
     if (excludedActions && event.action && excludedActions.includes(event.action)) {
       ignored ??= { route, reason: "exclude_action" };
+      continue;
+    }
+
+    // The payload condition is the finest-grained gate, so it runs last: an
+    // event this route's event/action domain invited but whose payload the
+    // policy does not cover.
+    if (!matchPayloadConditions(route.match_payload, event.payload)) {
+      ignored ??= { route, reason: "match_payload" };
       continue;
     }
 

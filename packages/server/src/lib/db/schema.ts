@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS routes (
   match_action     TEXT,                    -- comma-sep, NULL = all
   exclude_event    TEXT,                    -- comma-sep blacklist, route-local
   exclude_action   TEXT,                    -- comma-sep blacklist, route-local
+  match_payload    TEXT,                    -- JSON clause list (OR of AND-clauses), NULL = no condition
   target_channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   priority         INTEGER NOT NULL DEFAULT 100,
   enabled          INTEGER NOT NULL DEFAULT 1,
