@@ -290,17 +290,20 @@ describe("matchRoute", () => {
     expect(resolveRoute(config, event({ event: "create" }))).toEqual({ kind: "no_route" });
   });
 
-  it("ships a quiet event whitelist in config.example.yaml", () => {
+  it("ships three non-overlapping routes in config.example.yaml", () => {
     const example = loadSeedConfig(`${import.meta.dir}/../../../../../config.example.yaml`);
-    expect(example?.routes?.[0]?.match_event).toBe("push,pull_request,issues,release");
     if (!example) throw new Error("Expected the shipped example config to load");
 
-    for (const eventType of ["push", "pull_request", "issues", "release"]) {
-      expect(resolveRoute(example, event({ event: eventType }))).toMatchObject({
-        kind: "matched",
-        match: { route: { name: "core-events-to-team" }, channel: { name: "team-feishu" } },
-      });
-    }
+    // One policy per route, over mutually exclusive event types — the shape
+    // issue #34 defines, and the reason no priority ordering is needed between
+    // them. What each route does with the events it names is covered in
+    // match-payload.test.ts.
+    expect((example.routes ?? []).map((route) => [route.name, route.match_event])).toEqual([
+      ["pushes-to-team", "push"],
+      ["issues-to-team", "issues"],
+      ["pull-request-release-to-team", "pull_request,release"],
+    ]);
+
     for (const eventType of ["create", "status", "check_run"]) {
       expect(resolveRoute(example, event({ event: eventType }))).toEqual({ kind: "no_route" });
     }
@@ -369,6 +372,56 @@ describe("loadSeedConfig", () => {
     writeFileSync(path, "channels: [unclosed");
     expect(() => loadSeedConfig(path)).toThrow();
   });
+
+  /** Write a one-route config carrying the given `match_payload` line. */
+  function writeRoute(file: string, matchPayload: string): string {
+    mkdirSync(tmpDir, { recursive: true });
+    const path = join(tmpDir, file);
+    writeFileSync(
+      path,
+      [
+        "channels:",
+        "  - name: team",
+        "    type: feishu",
+        "    webhook_url: https://x",
+        "    enabled: true",
+        "routes:",
+        "  - name: noisy",
+        "    match_event: push",
+        `    match_payload: ${matchPayload}`,
+        "    target_channel: team",
+        "",
+      ].join("\n"),
+    );
+    return path;
+  }
+
+  it("accepts a single clause written without the list wrapper", () => {
+    const path = writeRoute("single-clause.yaml", "{ ref: refs/heads/main }");
+    expect(loadSeedConfig(path)?.routes?.[0]?.match_payload).toEqual({
+      ref: "refs/heads/main",
+    });
+  });
+
+  // A condition the matcher cannot read has to fail here, naming the route —
+  // not at request time, and never as "matches everything".
+  const invalidShapes: Array<[string, string]> = [
+    ["a bare key", ""],
+    ["null", "null"],
+    ["a scalar", "5"],
+    ["an empty list", "[]"],
+    ["an empty clause", "[{}]"],
+    ["a null clause", "[null]"],
+    ["a list value", "[{ ref: [a, b] }]"],
+    ["a null value", "{ ref: null }"],
+  ];
+
+  for (const [index, [shape, written]] of invalidShapes.entries()) {
+    it(`rejects match_payload written as ${shape}`, () => {
+      const path = writeRoute(`invalid-${index}.yaml`, written);
+      expect(() => loadSeedConfig(path)).toThrow(/route "noisy": match_payload/);
+    });
+  }
 
   // Cleanup once after the suite.
   it("cleanup", () => {

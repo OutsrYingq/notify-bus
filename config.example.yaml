@@ -1,9 +1,11 @@
 # notify-bus seed config.
 #
-# Quiet defaults apply only when creating a config from this updated example.
-# Existing config.yaml files are NOT migrated automatically: add match_event
-# or exclude_event manually, and check later routes for fallback delivery.
-# Exclusions are route-local, not a global ban; a later route may still send.
+# The defaults below are quiet, and they apply only when you create a config from
+# this example. An existing config.yaml is NOT migrated automatically: it keeps
+# whatever it had — including a shared route whose action exclusions hit Issue and
+# pull_request alike, which is worth re-reading by hand against the notes under
+# `routes`. Every filter here is route-local, not a global ban: a later route may
+# still send what an earlier one dropped.
 #
 # Copy to config.yaml (gitignored) and edit. This YAML is the only config source
 # today: routes, channels and templates are read from it at startup, so an edit
@@ -29,11 +31,23 @@ channels:
     enabled: true
 
 routes:
-  # Choosing events. Only the four types in `match_event` below are delivered;
-  # every other event GitHub sends is dropped until you name it in a route — a
-  # config edit, nothing more. Events that have a dedicated card render richly,
-  # the rest become the plain grey fallback card (see
+  # Three routes, one policy each, over mutually exclusive event types — so the
+  # order they run in (all priority 100) never decides anything. Every event
+  # GitHub sends that no route names is dropped until you add one — a config
+  # edit, nothing more. Events that have a dedicated card render richly, the
+  # rest become the plain grey fallback card (see
   # packages/server/src/lib/adapters/).
+  #
+  # `match_payload` is the route-local payload condition, for what `match_action`
+  # cannot express — a branch, a CI conclusion, a deployment state. It is a list
+  # of clauses OR'd together, each clause a map of dotted payload paths AND'd
+  # together; a single clause may be written without the list wrapper. An
+  # expected value is compared as text, so `true` matches a `true` payload field;
+  # `*` matches any run of characters, newlines included; and `$default_branch`
+  # stands for `payload.repository.default_branch`. A field the payload does not
+  # carry never matches — a missing `deleted` is not a `false` one. A malformed
+  # condition (a scalar, `null`, an empty clause, an empty list) is rejected when
+  # the config loads, naming the route, rather than read as "matches everything".
   #
   # Some events are different observation points on the same activity — pick by
   # how your tooling reports, expecting one notification per source you add:
@@ -49,24 +63,73 @@ routes:
   #   - `star` / `watch` — `star` has its own card, `watch` is the grey fallback
   #   - `repository` action `publicized` / `public`
   #   - `team` action `added_to_repository` / `team_add`
+
+  # The pushes worth waking a channel for: a newly created branch (its first
+  # push, and only that one) and updates to the repository's default branch,
+  # force pushes included. A tag is not a branch — `refs/tags/...` matches
+  # neither clause even when GitHub sets `created: true` on it. Appending
+  # commits to a feature branch is silent, and so is force pushing one: a forced
+  # push is only noteworthy where it matched anyway, so no clause keys off
+  # `forced`. No deletion notifies either — clause one needs `created`, and
+  # clause two asks for `deleted: false`, which keeps a default-branch removal
+  # out. A payload carrying no `repository.default_branch` cannot satisfy clause
+  # two — that update is refused rather than matched against a guessed `main` —
+  # while clause one never reads the field, so a new branch is still delivered
+  # either way. A repo whose default branch is `develop` gets that branch here,
+  # and `main` on it stays silent.
   #
-  # Overlap between different actions is expected too: merging a pull request
-  # also pushes to the base branch, so `pull_request` and `push` may both
-  # arrive; pushing to a pull request's branch also re-sends `pull_request`
-  # (`synchronize`) alongside `push`. Adding `synchronize` to `exclude_action`
-  # below drops that one — except for a fork pull request, whose push lands in
-  # the fork and can leave `synchronize` as the only delivery. All of this comes
-  # from GitHub's event semantics rather than a run measured here, so confirm it
-  # on your own repositories before silencing anything.
-  - name: core-events-to-team
+  # For further important branches, add a clause of your own rather than a
+  # second route, for example:
+  #     - ref: refs/heads/release/*
+  - name: pushes-to-team
     match_repo: "*" # `*` matches every repository
-    match_event: push,pull_request,issues,release
-    # match_action: opened,closed # omit to match all actions
-    # exclude_event and exclude_action apply only to this route. An excluded
-    # event/action may still be delivered by a later, lower-priority route.
-    # exclude_action: labeled,unlabeled,assigned,synchronize
+    match_event: push
+    match_payload:
+      - ref: refs/heads/*
+        created: true
+      - ref: refs/heads/$default_branch
+        deleted: false
     target_channel: team-feishu # resolved by name to a channel above
     priority: 100 # lower = higher priority; first match wins
+    enabled: true
+
+  # Issue activity that concerns someone: opened, closed, reopened, assigned.
+  # The whitelist is the whole policy — `labeled`, `unlabeled`, `edited`,
+  # `pinned`, `locked`, `milestoned` and the rest of the churn are not listed,
+  # so they are not delivered (they resolve as `no_route`, the same as an event
+  # no route names). Deliberately silent as well: `unassigned`, because a second
+  # assignment change says little, and `transferred`, because the issue now
+  # belongs to another repository. Add either to the list to hear about it.
+  #
+  # Keep `pull_request` off this route. `assigned` and `unassigned` exist on both
+  # events, so an exclusion written here would also silence an assignment on a
+  # PR — and a whitelist like this one would drop every PR action it does not
+  # name. The route below carries them instead.
+  - name: issues-to-team
+    match_repo: "*"
+    match_event: issues
+    match_action: opened,closed,reopened,assigned
+    target_channel: team-feishu
+    priority: 100
+    enabled: true
+
+  # Pull requests and releases keep their previous behavior: every action, no
+  # payload condition. `pull_request.review_requested` (a review was asked for)
+  # is a different event from `pull_request_review` (a review was submitted):
+  # the first arrives here, the second only if you name it in a route.
+  #
+  # Overlap with the push route is expected: merging a pull request also pushes
+  # to its base branch, and pushing to a pull request's branch re-sends
+  # `pull_request` (`synchronize`) alongside `push`. Add `synchronize` to
+  # `exclude_action` below to drop that one — except for a fork pull request,
+  # whose push lands in the fork, which can leave `synchronize` as the only
+  # delivery. All of this comes from GitHub's event semantics rather than a run
+  # measured here, so confirm it on your own repositories before silencing.
+  - name: pull-request-release-to-team
+    match_repo: "*"
+    match_event: pull_request,release
+    target_channel: team-feishu
+    priority: 100
     enabled: true
 
   # Example: match every event except known noise. Omit `match_event` to match
@@ -77,11 +140,12 @@ routes:
   #   target_channel: team-feishu
   #   priority: 200
 
-  # Example: get issues but silence label/assignment churn on this route.
-  # - name: issues-without-label-churn
+  # Example: a whole-comment route of your own. Routes without `match_payload`
+  # keep matching every action in their event domain, which is how a route like
+  # this one still delivers all conversation comments.
+  # - name: pr-conversation
   #   match_repo: "*"
-  #   match_event: issues
-  #   exclude_action: labeled,unlabeled,assigned
+  #   match_event: issue_comment
   #   target_channel: team-feishu
   #   priority: 50
 
