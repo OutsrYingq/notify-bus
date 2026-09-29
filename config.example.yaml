@@ -57,6 +57,9 @@ routes:
   #     `deployment` is a different event, the moment one is created. Neither
   #     replaces the other — keep both if you want that moment too.
   #
+  # Both result events are opt-in and off by default: the commented examples
+  # further down show the "only if it failed" shape for each.
+  #
   # Three pairs of names look interchangeable. Nothing here established that one
   # action fires both, or that subscribing to both sends two notifications, so
   # send yourself a test event of each half before relying on either:
@@ -134,9 +137,14 @@ routes:
 
   # Example: match every event except known noise. Omit `match_event` to match
   # all event types — unlike match_repo, event lists intentionally do not use `*`.
+  # The result events are in this list as well: they are opt-in, and a single run
+  # reports itself several times, so an unlisted `workflow_run` would deliver the
+  # whole run — not just its failures. Enabling this example does not take them
+  # away from a failures-only route of your own, further down: an exclusion is
+  # route-local, and a later route still receives what this one drops.
   # - name: all-except-noise
   #   match_repo: "*"
-  #   exclude_event: create,delete,label,milestone,status,check_run,check_suite,workflow_job,project,project_card,project_column,page_build,meta,security_and_analysis
+  #   exclude_event: create,delete,label,milestone,status,check_run,check_suite,workflow_job,workflow_run,deployment_status,project,project_card,project_column,page_build,meta,security_and_analysis
   #   target_channel: team-feishu
   #   priority: 200
 
@@ -146,6 +154,38 @@ routes:
   # - name: pr-conversation
   #   match_repo: "*"
   #   match_event: issue_comment
+  #   target_channel: team-feishu
+  #   priority: 50
+
+  # Example: only a failing CI run. `workflow_run` is opt-in twice over — GitHub
+  # has to be sending the event (subscribe it on the repository) and a route has
+  # to name it. "Only a failure" is a payload condition, not a colour: the card's
+  # red is a display choice, so `timed_out` and `startup_failure` — which render
+  # red too — are not delivered unless you list them here. A run still in
+  # progress carries no conclusion, and a missing field never matches, so it
+  # stays silent on its own.
+  # - name: ci-failures
+  #   match_repo: "*"
+  #   match_event: workflow_run
+  #   match_payload:
+  #     - action: completed
+  #       workflow_run.conclusion: failure
+  #   target_channel: team-feishu
+  #   priority: 50
+
+  # Example: only a failed deployment. `deployment_status` is a deployment's
+  # progress and result, and only a deployment that reports its status produces
+  # the event. Its `action` is always `created` — the state is the signal:
+  # `failure` and `error` say something went wrong, `pending` / `queued` /
+  # `in_progress` say it is running, `success` says it finished. This route takes
+  # the two failures. (`deployment`, a different event, is the moment one is
+  # created.)
+  # - name: deployment-failures
+  #   match_repo: "*"
+  #   match_event: deployment_status
+  #   match_payload:
+  #     - deployment_status.state: failure
+  #     - deployment_status.state: error
   #   target_channel: team-feishu
   #   priority: 50
 

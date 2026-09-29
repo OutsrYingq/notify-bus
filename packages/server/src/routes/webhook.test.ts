@@ -1,6 +1,7 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test";
 import { createHmac } from "node:crypto";
 import { buildWebhookRoute } from "./webhook";
+import { feishuAdapter } from "../lib/adapters/feishu";
 import type { AdapterRegistry, ChannelAdapter } from "../lib/adapters/types";
 import type { SeedConfig } from "../lib/config";
 import type { EventMessage } from "../types";
@@ -57,6 +58,62 @@ function pushBody(ref: string): string {
     repository: { full_name: "org/repo", html_url: "https://gh/o/r", default_branch: "main" },
     sender: { login: "alice", avatar_url: "" },
   });
+}
+
+/** A completed `workflow_run` body carrying one conclusion. */
+function runBody(conclusion: string): string {
+  return JSON.stringify({
+    action: "completed",
+    repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
+    sender: { login: "alice", avatar_url: "" },
+    workflow_run: {
+      name: "CI",
+      status: "completed",
+      conclusion,
+      head_branch: "main",
+      html_url: "https://gh/o/r/actions/runs/81",
+    },
+  });
+}
+
+function elementsOf(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+}
+
+/** Every button in a sent card, including the ones nested in a column_set. */
+function buttonsOf(payload: Record<string, unknown>): Array<Record<string, unknown>> {
+  const card = payload.card as { body: { elements: unknown } };
+  const buttons: Array<Record<string, unknown>> = [];
+  for (const element of elementsOf(card.body.elements)) {
+    if (element.tag === "button") buttons.push(element);
+    for (const column of elementsOf(element.columns)) {
+      for (const inner of elementsOf(column.elements)) {
+        if (inner.tag === "button") buttons.push(inner);
+      }
+    }
+  }
+  return buttons;
+}
+
+/** The parts of a sent card these tests assert on. */
+interface SentCardHeader {
+  template: string;
+  title: { content: string };
+  text_tag_list?: Array<{ text: { content: string } }>;
+}
+
+function headerOf(payload: Record<string, unknown>): SentCardHeader {
+  return (payload.card as { header: SentCardHeader }).header;
+}
+
+function labelsOf(payload: Record<string, unknown>): string[] {
+  return buttonsOf(payload).map((button) => (button.text as { content: string }).content);
+}
+
+function targetsOf(payload: Record<string, unknown>): Array<string | undefined> {
+  return buttonsOf(payload).map(
+    (button) => (button.behaviors as Array<{ default_url?: string }>)[0]?.default_url,
+  );
 }
 
 async function postWebhook(
@@ -330,5 +387,116 @@ describe("webhook route with a payload condition", () => {
     });
     expect(json).toMatchObject({ status: "no_route", event: "issues" });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("webhook route with a failures-only result policy (#35)", () => {
+  const failuresOnly: SeedConfig = {
+    channels: [
+      { name: "team", type: "feishu", webhook_url: "https://feishu.example/hook", enabled: true },
+    ],
+    routes: [
+      {
+        name: "ci-failures",
+        match_repo: "*",
+        match_event: "workflow_run",
+        match_payload: [{ action: "completed", "workflow_run.conclusion": "failure" }],
+        target_channel: "team",
+      },
+      {
+        name: "deployment-failures",
+        match_repo: "*",
+        match_event: "deployment_status",
+        match_payload: [{ "deployment_status.state": "failure" }],
+        target_channel: "team",
+      },
+    ],
+  };
+
+  const originalFetch = globalThis.fetch;
+  let sent: Array<Record<string, unknown>> = [];
+
+  beforeEach(() => {
+    sent = [];
+    // The real adapter, with the one network call it makes replaced: what this
+    // inspects is the payload Feishu would have received.
+    globalThis.fetch = mock((_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return Promise.resolve(
+        new Response(JSON.stringify({ code: 0, data: { message_id: "om_1" } })),
+      );
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function app() {
+    return buildWebhookRoute({
+      config: failuresOnly,
+      adapters: new Map([["feishu", feishuAdapter]]),
+      secret: SECRET,
+    });
+  }
+
+  it("sends the failure card, with the run's conclusion and target", async () => {
+    const body = runBody("failure");
+    const { json } = await postWebhook(app(), body, {
+      "x-github-event": "workflow_run",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(json).toMatchObject({ status: "success", route: "ci-failures", channel: "team" });
+    expect(sent).toHaveLength(1);
+
+    const payload = sent[0]!;
+    expect(payload.msg_type).toBe("interactive");
+    expect((payload.card as { schema: string }).schema).toBe("2.0");
+    expect(headerOf(payload).template).toBe("red");
+    expect(headerOf(payload).title.content).toBe("⚙️ CI");
+    expect(headerOf(payload).text_tag_list?.[0]?.text.content).toBe("failure");
+    expect(labelsOf(payload)).toEqual(["View Run", "View Repo"]);
+    expect(targetsOf(payload)).toEqual(["https://gh/o/r/actions/runs/81", "https://gh/o/r"]);
+  });
+
+  it("calls no channel for a successful run", async () => {
+    const body = runBody("success");
+    const { json } = await postWebhook(app(), body, {
+      "x-github-event": "workflow_run",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(json).toMatchObject({
+      status: "ignored",
+      route: "ci-failures",
+      reason: "match_payload",
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("sends a deployment failure with its environment target", async () => {
+    const body = JSON.stringify({
+      action: "created",
+      repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
+      sender: { login: "alice", avatar_url: "" },
+      deployment_status: {
+        state: "failure",
+        environment: "production",
+        environment_url: "https://prod.example",
+      },
+      deployment: { ref: "main" },
+    });
+    const { json } = await postWebhook(app(), body, {
+      "x-github-event": "deployment_status",
+      "x-hub-signature-256": sign(body, SECRET),
+    });
+    expect(json).toMatchObject({ status: "success", route: "deployment-failures" });
+    expect(sent).toHaveLength(1);
+
+    const payload = sent[0]!;
+    expect(headerOf(payload).template).toBe("red");
+    expect(headerOf(payload).title.content).toBe("🚀 Deployment");
+    expect(headerOf(payload).text_tag_list?.[0]?.text.content).toBe("failure");
+    expect(labelsOf(payload)).toEqual(["View Environment", "View Repo"]);
+    expect(targetsOf(payload)).toEqual(["https://prod.example", "https://gh/o/r"]);
   });
 });
