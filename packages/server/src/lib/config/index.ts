@@ -12,6 +12,13 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
+import {
+  commentBodyOf,
+  isReservedLogin,
+  normalizeMentionMap,
+  resolveMentionTargets,
+} from "../mentions";
+import type { MentionTargets } from "../mentions";
 import type { EventMessage } from "../../types";
 
 /** A channel declared in the YAML seed config (snake_case, as authored). */
@@ -21,6 +28,13 @@ export interface SeedChannel {
   webhook_url: string;
   secret?: string;
   enabled?: boolean;
+  /**
+   * GitHub login → Feishu `user_id`, for this channel's targeted @ mentions.
+   * Logins match case-insensitively and the map only applies to this channel.
+   * Only what is written here can become a real mention — a login read out of a
+   * payload never can. See `lib/mentions`.
+   */
+  mention_map?: Record<string, string>;
 }
 
 /**
@@ -54,6 +68,13 @@ export interface SeedRoute {
    * as "matches everything". See {@link matchPayloadConditions}.
    */
   match_payload?: PayloadCondition | PayloadCondition[];
+  /**
+   * Deliver only when the comment's plain text @-mentions somebody this route's
+   * channel maps, and the comment comes from somebody the channel maps too.
+   * Requires `match_event` to name a comment event; a route that omits this
+   * field keeps delivering every comment it matches. See `lib/mentions`.
+   */
+  mention_only?: boolean;
   target_channel: string; // by name, resolved to a SeedChannel at match time
   priority?: number;
   enabled?: boolean;
@@ -104,20 +125,103 @@ function assertMatchPayload(route: SeedRoute): void {
   }
 }
 
+/** GitHub's login rule: letters, digits and inner hyphens, 1–39 characters. */
+const GITHUB_LOGIN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/i;
+
+/** Feishu ids are alphanumeric with `_` / `-`; anything else could break the card markup. */
+const FEISHU_ID = /^[a-z0-9_-]+$/i;
+
+/** The events whose payload nests a comment body a `mention_only` route reads. */
+const COMMENT_EVENTS = ["issue_comment", "pull_request_review_comment"];
+
+/**
+ * Reject a `mention_map` that cannot be read as login → id pairs.
+ *
+ * The map is what allows an @ at all: a mistyped key silently disables one
+ * person's mentions, a duplicate disables whichever of the two the matcher
+ * happens to reach, and a malformed id can make an entire card fail to send.
+ * All of it fails here instead, naming the channel (#36).
+ */
+function assertMentionMap(channel: SeedChannel): void {
+  const map = channel.mention_map;
+  if (map === undefined) return;
+  const reject = (detail: string): never => {
+    throw new Error(`channel "${channel.name}": mention_map ${detail}`);
+  };
+  if (typeof map !== "object" || map === null || Array.isArray(map)) {
+    reject("must be a map of github-login: feishu-user-id");
+  }
+  const written = new Map<string, string>();
+  for (const [login, userId] of Object.entries(map)) {
+    const key = login.trim().toLowerCase();
+    if (key === "") reject("has an empty login");
+    if (!GITHUB_LOGIN.test(key)) reject(`key "${login}" is not a GitHub login`);
+    if (isReservedLogin(key)) {
+      reject(`"${login}" is reserved — a comment that says "@${key}" is never read as a person`);
+    }
+    if (typeof userId !== "string" || userId.trim() === "") {
+      reject(`"${login}" has to name a Feishu user id`);
+    }
+    if (!FEISHU_ID.test(userId.trim())) {
+      reject(`"${login}" has a user id that cannot be sent as a mention`);
+    }
+    const duplicate = written.get(key);
+    if (duplicate !== undefined) reject(`maps "${duplicate}" and "${login}" to the same login`);
+    written.set(key, login);
+  }
+  if (written.size === 0) reject("has to map at least one login, or be omitted");
+}
+
+/**
+ * Reject `mention_only` where it could never be satisfied.
+ *
+ * The policy reads a comment body, so on any other event it would refuse every
+ * delivery: a route that looks enabled and is silently dead. The same goes for a
+ * channel with no `mention_map` — nobody is mappable, so nobody is ever
+ * mentioned. Saying so at load is the difference between a config mistake and a
+ * mystery.
+ */
+function assertMentionOnly(route: SeedRoute, channels: ReadonlyMap<string, SeedChannel>): void {
+  const mentionOnly = route.mention_only;
+  if (mentionOnly === undefined) return;
+  if (typeof mentionOnly !== "boolean") {
+    throw new Error(`route "${route.name}": mention_only has to be true or false`);
+  }
+  if (!mentionOnly) return;
+  const events = splitCsv(route.match_event) ?? [];
+  if (!events.some((event) => COMMENT_EVENTS.includes(event))) {
+    throw new Error(
+      `route "${route.name}": mention_only reads a comment body — name ${COMMENT_EVENTS.join(" or ")} in match_event, or drop the field`,
+    );
+  }
+  const channel = channels.get(route.target_channel);
+  if (channel && !channel.mention_map) {
+    throw new Error(
+      `route "${route.name}": mention_only needs a mention_map on channel "${route.target_channel}" — without one nothing can be mentioned`,
+    );
+  }
+}
+
 /**
  * Load the YAML seed config from disk.
  *
  * Returns null if the file is absent (running with no seed is valid — the
- * webhook will just never match a route). Throws on a malformed file, and on a
- * route whose `match_payload` cannot be read as conditions: a broken config is
- * a deployment error, not a silent-default situation.
+ * webhook will just never match a route). Throws on a malformed file, on a
+ * route whose `match_payload` cannot be read as conditions, and on a channel or
+ * route whose mention configuration could only fail later: a broken config is a
+ * deployment error, not a silent-default situation.
  */
 export function loadSeedConfig(path: string): SeedConfig | null {
   if (!existsSync(path)) return null;
   const text = readFileSync(path, "utf8");
   const parsed = parseYaml(text) as SeedConfig | null;
   if (parsed === null || parsed === undefined) return null;
-  for (const route of parsed.routes ?? []) assertMatchPayload(route);
+  for (const channel of parsed.channels ?? []) assertMentionMap(channel);
+  const channelByName = new Map((parsed.channels ?? []).map((channel) => [channel.name, channel]));
+  for (const route of parsed.routes ?? []) {
+    assertMatchPayload(route);
+    assertMentionOnly(route, channelByName);
+  }
   return parsed;
 }
 
@@ -228,11 +332,17 @@ function matchPayloadConditions(
 export interface RouteMatch {
   route: SeedRoute;
   channel: SeedChannel;
+  /**
+   * The @ targets a `mention_only` route resolved from the comment, and the only
+   * people the card may name. The webhook carries them on `message.metadata`, so
+   * the delivery decision and the card share one parse rather than repeating it.
+   */
+  mentions?: MentionTargets;
 }
 
 interface IgnoredRoute {
   route: SeedRoute;
-  reason: "exclude_event" | "exclude_action" | "match_payload";
+  reason: "exclude_event" | "exclude_action" | "match_payload" | "mention_only";
 }
 
 type RouteDecision =
@@ -244,11 +354,12 @@ type RouteDecision =
  * Resolve an event against routes in priority order.
  *
  * Every route-local gate is permissive to the rest of the chain: a route that
- * excludes an event or action, or whose payload condition does not hold, falls
- * through so a later route may still accept the event. An `ignored` decision is
- * returned only when no later route accepts what an earlier one rejected, and
- * its `reason` names the field that rejected it, so a policy miss stays
- * distinguishable from an event no route ever wanted (`no_route`).
+ * excludes an event or action, whose payload condition does not hold, or that
+ * finds nobody to mention, falls through so a later route may still accept the
+ * event. An `ignored` decision is returned only when no later route accepts what
+ * an earlier one rejected, and its `reason` names the field that rejected it, so
+ * a policy miss stays distinguishable from an event no route ever wanted
+ * (`no_route`).
  */
 export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDecision {
   const channels = config.channels ?? [];
@@ -291,6 +402,22 @@ export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDeci
     if (!matchPayloadConditions(route.match_payload, event.payload)) {
       ignored ??= { route, reason: "match_payload" };
       continue;
+    }
+
+    // `mention_only` is the narrowest gate and the only one that reads text: the
+    // comment has to name somebody this channel maps, from somebody the channel
+    // maps too. The targets are resolved here, once, and travel with the match.
+    if (route.mention_only) {
+      const mentions = resolveMentionTargets(
+        commentBodyOf(event.payload),
+        normalizeMentionMap(channel.mention_map),
+        event.actor.login,
+      );
+      if (mentions === undefined) {
+        ignored ??= { route, reason: "mention_only" };
+        continue;
+      }
+      return { kind: "matched", match: { route, channel, mentions } };
     }
 
     return { kind: "matched", match: { route, channel } };

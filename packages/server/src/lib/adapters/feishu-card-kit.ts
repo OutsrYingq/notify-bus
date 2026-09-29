@@ -17,6 +17,8 @@
  *   - Inside markdown/lark_md: `<text_tag color="green">label</text_tag>`
  *     renders a colored pill; `<font color="green">+42</font>` colors text.
  */
+import { readMentionTargets } from "../mentions";
+import type { EventMessage } from "../../types";
 
 /** Header color theme (Feishu enum). */
 export type CardColor =
@@ -130,6 +132,36 @@ export function md(text: string | undefined): string {
       .replace(/\|/g, "\\|")
       .trim()
   );
+}
+
+// ─── targeted mentions ─────────────────────────────────────────────────────
+
+/**
+ * A real Feishu mention, for the `user_id`s a channel's `mention_map` holds.
+ *
+ * Only a mapped id may be interpolated here. Card markup is *generated*, never
+ * assembled from a payload: the text around it still goes through {@link md}, so
+ * a comment cannot smuggle a mention of its own (#36).
+ *
+ * The form is the one the test-group spike verified — `<at id=<user_id>>` with
+ * no quotes, inside a schema 2.0 card — which rendered as a mention and reached
+ * the client as a notification.
+ */
+export function at(userId: string): string {
+  return `<at id=${userId}></at>`;
+}
+
+/**
+ * The @ line for the targets a `mention_only` route resolved for this event, or
+ * `""` when the event names nobody.
+ *
+ * Reading the route's own result — not parsing the comment again — is what keeps
+ * the card's recipients identical to the ones the delivery was decided on.
+ */
+export function mentionLine(message: EventMessage): string {
+  return readMentionTargets(message)
+    .userIds.map((userId) => at(userId))
+    .join(" ");
 }
 
 // ─── element constructors ──────────────────────────────────────────────────
