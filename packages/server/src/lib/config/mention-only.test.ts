@@ -31,15 +31,22 @@ function mentionRoute(target: string, event = "issue_comment"): SeedRoute {
   };
 }
 
-/** A comment event: who wrote it, and what it says. */
-function comment(event: string, author: string, body: string): EventMessage {
+/**
+ * A comment event: who wrote it, what it says, and which action posted it.
+ *
+ * The action matters: a `mention_only` route only reads a comment's first
+ * posting, so a helper that left it out (or pinned it to `created`) would hide
+ * the edit case entirely (#36).
+ */
+function comment(event: string, author: string, body: string, action = "created"): EventMessage {
   return {
     id: "evt-1",
     event,
+    action,
     repository: { full_name: "org/repo", html_url: "https://gh/o/r" },
     actor: { login: author, avatar_url: "" },
     payload: {
-      action: "created",
+      action,
       comment: { body, html_url: "https://gh/o/r/issues/1#issuecomment-2" },
     },
     metadata: {},
@@ -92,6 +99,28 @@ describe("mention_only · delivery", () => {
       kind: "ignored",
       ignored: { reason: "mention_only" },
     });
+  });
+
+  it("refuses a comment an edit added the mention to", () => {
+    // #36's non-goals: a mention that appears because somebody edited the
+    // comment afterwards must not ping anyone, on either comment event.
+    for (const event of ["issue_comment", "pull_request_review_comment"]) {
+      const config: SeedConfig = {
+        channels: [channel("mapped", MAP)],
+        routes: [mentionRoute("mapped", event)],
+      };
+      for (const action of ["edited", "deleted"]) {
+        expect([
+          event,
+          action,
+          resolveRoute(config, comment(event, "carol", "edit: cc @alice", action)).kind,
+        ]).toEqual([event, action, "ignored"]);
+      }
+      // …and the same comment when it is first posted is delivered.
+      expect(resolveRoute(config, comment(event, "carol", "cc @alice"))).toMatchObject({
+        kind: "matched",
+      });
+    }
   });
 
   it("applies the same policy to a PR's line-by-line review comments", () => {
@@ -243,6 +272,7 @@ describe("mention configuration · load time (#36)", () => {
     ["a non-string user id", ["mention_map:", "  octocat: 42"]],
     ["an id that could break the markup", ["mention_map:", '  octocat: "ou_x></at>"']],
     ["a reserved name", ["mention_map:", "  all: ou_all"]],
+    ["an id that addresses the whole chat", ["mention_map:", "  octocat: ALL"]],
     [
       "the same login twice, in different case",
       ["mention_map:", "  octocat: ou_a", "  OctoCat: ou_b"],
@@ -287,6 +317,28 @@ describe("mention configuration · load time (#36)", () => {
   it("accepts a route that turns the policy off explicitly", () => {
     const path = writeConfig("flag-false.yaml", [], ["match_event: push", "mention_only: false"]);
     expect(loadSeedConfig(path)?.routes?.[0]?.mention_only).toBe(false);
+  });
+
+  it("rejects mention_only with an action whitelist that leaves out created", () => {
+    // The policy only ever reads a comment's first posting, so a route that
+    // excludes it could never deliver anything.
+    const path = writeConfig(
+      "flag-actions.yaml",
+      ["mention_map:", "  octocat: REPLACE_ME_ID"],
+      ["match_event: issue_comment", "match_action: opened,closed", "mention_only: true"],
+    );
+    expect(() => loadSeedConfig(path)).toThrow(
+      /route "noisy": mention_only only delivers a comment's first posting/,
+    );
+  });
+
+  it("accepts the shape the example documents: created, mapped, mention-only", () => {
+    const path = writeConfig(
+      "flag-created.yaml",
+      ["mention_map:", "  octocat: REPLACE_ME_ID"],
+      ["match_event: issue_comment", "match_action: created", "mention_only: true"],
+    );
+    expect(loadSeedConfig(path)?.routes?.[0]?.mention_only).toBe(true);
   });
 
   it("cleanup", () => {

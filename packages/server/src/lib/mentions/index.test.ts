@@ -18,12 +18,14 @@ import {
 import type { EventMessage } from "../../types";
 
 /**
- * A small team. `Bob` is written in mixed case on purpose, `all` and
- * `platform-team` are mapped so the reserved-word and team-reference rules are
- * tested against a login that *would* match if they were read naively.
+ * A small team. `Bob` is written in mixed case on purpose, `og` is an old handle
+ * for `alice` (one person, two logins), and `all` and `platform-team` are mapped
+ * so the reserved-word and team-reference rules are tested against a login that
+ * *would* match if they were read naively.
  */
 const MAP = {
   alice: "ou_alice",
+  og: "ou_alice",
   Bob: "ou_bob",
   carol: "ou_carol",
   dave: "ou_dave",
@@ -89,14 +91,54 @@ describe("resolveMentionTargets", () => {
     expect(targets("write `@alice` in the issue")).toBeUndefined();
   });
 
+  it("ignores inline code written with a run of backticks", () => {
+    // ` ``x`` ` is how a comment writes code that itself contains a backtick.
+    expect(targets("the flag is ``--user=@alice`` here")).toBeUndefined();
+  });
+
+  it("ignores a fenced block of four backticks", () => {
+    expect(targets("````\n@alice\n````")).toBeUndefined();
+  });
+
   it("still reads the plain text around a code block", () => {
     expect(targets("```\n@bob\n```\nbut @alice please")?.logins).toEqual(["alice"]);
+  });
+
+  it("ignores a mention that continues into a longer login", () => {
+    // `@alice_smith` names somebody else: a login cannot contain `_`, so the
+    // token does not end there — and `@alice-bob` is one longer login, not two.
+    expect(targets("@alice_smith please look")).toBeUndefined();
+    expect(targets("@alice-bob please look")).toBeUndefined();
+    // The punctuation a sentence actually ends with still terminates one.
+    expect(targets("thanks @alice.")?.logins).toEqual(["alice"]);
+    expect(targets("cc (@alice, @bob)")?.logins).toEqual(["alice", "bob"]);
+  });
+
+  it("ignores a mention written inside a URL", () => {
+    // A link to somebody's profile is a reference, not an address.
+    expect(targets("see https://example.com/@alice")).toBeUndefined();
+    expect(targets("see example.com/@alice")).toBeUndefined();
+  });
+
+  it("ignores an escaped or doubled @", () => {
+    expect(targets("write \\@alice to mention them")).toBeUndefined();
+    expect(targets("@@alice")).toBeUndefined();
   });
 
   it("ignores an e-mail address that looks like a login", () => {
     expect(targets("mail alice@carol.com")).toBeUndefined();
     expect(targets("mail alice+review@dave.example")).toBeUndefined();
     expect(targets("mail alice.bob@erin.example")).toBeUndefined();
+  });
+
+  it("mentions a person once when two logins point at them", () => {
+    // `og` is an old handle for alice: the same person, so one @ — and the cap
+    // counts people rather than logins.
+    expect(targets("@alice and @og")).toEqual({ logins: ["alice"], userIds: ["ou_alice"] });
+    expect(targets("@alice @og @bob @carol @dave @erin")).toEqual({
+      logins: ["alice", "bob", "carol", "dave", "erin"],
+      userIds: ["ou_alice", "ou_bob", "ou_carol", "ou_dave", "ou_erin"],
+    });
   });
 
   it("ignores the reserved words @all and @here", () => {

@@ -183,4 +183,14 @@ describe("buildCard · issue_comment · mention-only targets (#36)", () => {
     const text = cardText("issue_comment", payload, "created");
     expect(text).not.toContain("<at id=");
   });
+
+  it("refuses to render a whole-chat mention id", () => {
+    // Defence in depth: the loader rejects a map holding one of these, and no
+    // other path may ping a group either (#36).
+    expect(() =>
+      prodCard("issue_comment", payload, "created", {
+        mentions: { logins: ["all"], userIds: ["all"] },
+      }),
+    ).toThrow(/reserved Feishu id/);
+  });
 });

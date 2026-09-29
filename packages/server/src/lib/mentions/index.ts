@@ -43,28 +43,32 @@ export const MAX_MENTIONS = 5;
  */
 export const MENTIONS_METADATA_KEY = "mentions";
 
-/** Names that are never a person here, whatever a repository calls its files. */
+/**
+ * Names that address a whole chat rather than a person.
+ *
+ * Used for both sides of the map: a *login* of this name would never be read
+ * out of a comment, and a Feishu *id* of this name (`<at id=all>`) would ping
+ * everyone in the group. Neither may ever reach a card.
+ */
 const RESERVED = new Set(["all", "here"]);
 
-/**
- * Whether a login is one this module refuses to treat as a person.
- *
- * Exported for the config loader: a map entry for a reserved name would be a
- * line that can never fire, which is worth saying out loud rather than leaving
- * to be discovered.
- */
-export function isReservedLogin(login: string): boolean {
-  return RESERVED.has(normalizeLogin(login));
+/** Whether a login or Feishu id names a whole chat instead of one person. */
+export function isReservedMention(name: string): boolean {
+  return RESERVED.has(normalizeLogin(name));
 }
 
 /**
  * `@login` at a mention position.
  *
- * The preceding character matters: `foo@bar.com` and `user+tag@host` are
- * addresses, not mentions, so the `@` has to follow something that cannot end
- * an address (`.`, `+`, `%`, `-` and word characters all disqualify it).
+ * The preceding character matters, and each exclusion is a real false positive:
+ * `foo@bar.com`, `user+tag@host` and `first.last@host` are addresses; a mention
+ * in `https://example.com/@alice` is a path; `\@alice` was escaped; and `@@alice`
+ * is not an address either.
  */
-const MENTION = /(?:^|[^\w.+%-])@([a-z0-9][a-z0-9-]{0,38})/gi;
+const MENTION = /(?:^|[^\w.+%\\/@-])@([a-z0-9][a-z0-9-]{0,38})/gi;
+
+/** Characters a login can continue into: `@alice_smith` names somebody else. */
+const LOGIN_CONTINUATION = /[\w-]/;
 
 /** GitHub logins are case-insensitive; so is every lookup here. */
 function normalizeLogin(login: string): string {
@@ -72,16 +76,18 @@ function normalizeLogin(login: string): string {
 }
 
 /**
- * Drop fenced blocks and inline code.
+ * Drop code before looking for mentions.
  *
  * A mention inside code is code — reading it would ping somebody because a
- * comment quoted a command.
+ * comment quoted a command. Fenced blocks (three or more backticks, or `~~~`)
+ * go first, then inline code, and a run of backticks counts (` ``x`` ` is how a
+ * comment writes code that itself contains a backtick).
  */
 function stripCode(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/~~~[\s\S]*?~~~/g, " ")
-    .replace(/`[^`\n]*`/g, " ");
+    .replace(/`{3,}[\s\S]*?`{3,}/g, " ")
+    .replace(/`+[^`\n]*`+/g, " ")
+    .replace(/~~~[\s\S]*?~~~/g, " ");
 }
 
 /** The lookup form of a channel's map. A missing or unreadable map is empty. */
@@ -118,9 +124,12 @@ export function commentBodyOf(payload: Record<string, unknown>): string {
  *   - the comment comes from somebody this channel maps as well, so a stranger
  *     on a public repository cannot make notify-bus @ a teammate.
  *
- * An unnamed, unmapped, quoted-as-code or `@all` mention therefore delivers
- * nothing, and logins are matched case-insensitively, mentioned once each, and
- * capped at {@link MAX_MENTIONS}.
+ * A login has to be a whole token: `@alice_smith`, `example.com/@alice`,
+ * `\@alice`, `@alice/notify-bus` and anything inside code name nobody. Matches
+ * are case-insensitive, one @ per *person* — two logins mapped to the same
+ * Feishu id are that person, and are mentioned once — and capped at
+ * {@link MAX_MENTIONS}. Whether the event is one that may mention at all is the
+ * caller's decision: an edit or a deletion is not (#36).
  */
 export function resolveMentionTargets(
   body: string,
@@ -135,11 +144,11 @@ export function resolveMentionTargets(
   for (const match of text.matchAll(MENTION)) {
     const login = normalizeLogin(match[1] ?? "");
     if (login === "" || RESERVED.has(login)) continue;
-    // `@org/team` and `@user/repo` reference something, not somebody.
-    if (text[match.index + match[0].length] === "/") continue;
+    const end = match.index + match[0].length;
+    if (LOGIN_CONTINUATION.test(text[end] ?? "") || text[end] === "/") continue;
     const userId = lookup.get(login);
-    if (userId === undefined || logins.includes(login)) continue;
-    if (logins.length === MAX_MENTIONS) break;
+    if (userId === undefined || userIds.includes(userId)) continue;
+    if (userIds.length === MAX_MENTIONS) break;
     logins.push(login);
     userIds.push(userId);
   }

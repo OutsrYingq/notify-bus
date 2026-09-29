@@ -17,7 +17,7 @@
  *   - Inside markdown/lark_md: `<text_tag color="green">label</text_tag>`
  *     renders a colored pill; `<font color="green">+42</font>` colors text.
  */
-import { readMentionTargets } from "../mentions";
+import { isReservedMention, readMentionTargets } from "../mentions";
 import type { EventMessage } from "../../types";
 
 /** Header color theme (Feishu enum). */
@@ -148,6 +148,12 @@ export function md(text: string | undefined): string {
  * the client as a notification.
  */
 export function at(userId: string): string {
+  // `all` addresses the whole chat. The loader rejects a map that holds it, but
+  // nothing that *renders* a mention may rely on that: a caller which skipped
+  // the config path must fail loudly rather than ping a group (#36).
+  if (isReservedMention(userId)) {
+    throw new Error(`refusing to mention the reserved Feishu id "${userId}"`);
+  }
   return `<at id=${userId}></at>`;
 }
 

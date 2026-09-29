@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import {
   commentBodyOf,
-  isReservedLogin,
+  isReservedMention,
   normalizeMentionMap,
   resolveMentionTargets,
 } from "../mentions";
@@ -156,7 +156,7 @@ function assertMentionMap(channel: SeedChannel): void {
     const key = login.trim().toLowerCase();
     if (key === "") reject("has an empty login");
     if (!GITHUB_LOGIN.test(key)) reject(`key "${login}" is not a GitHub login`);
-    if (isReservedLogin(key)) {
+    if (isReservedMention(key)) {
       reject(`"${login}" is reserved — a comment that says "@${key}" is never read as a person`);
     }
     if (typeof userId !== "string" || userId.trim() === "") {
@@ -164,6 +164,11 @@ function assertMentionMap(channel: SeedChannel): void {
     }
     if (!FEISHU_ID.test(userId.trim())) {
       reject(`"${login}" has a user id that cannot be sent as a mention`);
+    }
+    if (isReservedMention(userId)) {
+      // `<at id=all>` addresses the whole chat, which is exactly what this
+      // feature must never do — a map entry cannot smuggle it in.
+      reject(`"${login}" maps to a user id that addresses the whole chat`);
     }
     const duplicate = written.get(key);
     if (duplicate !== undefined) reject(`maps "${duplicate}" and "${login}" to the same login`);
@@ -178,8 +183,9 @@ function assertMentionMap(channel: SeedChannel): void {
  * The policy reads a comment body, so on any other event it would refuse every
  * delivery: a route that looks enabled and is silently dead. The same goes for a
  * channel with no `mention_map` — nobody is mappable, so nobody is ever
- * mentioned. Saying so at load is the difference between a config mistake and a
- * mystery.
+ * mentioned — and for an action whitelist that leaves out `created`, the one
+ * action the policy reads. Saying so at load is the difference between a config
+ * mistake and a mystery.
  */
 function assertMentionOnly(route: SeedRoute, channels: ReadonlyMap<string, SeedChannel>): void {
   const mentionOnly = route.mention_only;
@@ -192,6 +198,12 @@ function assertMentionOnly(route: SeedRoute, channels: ReadonlyMap<string, SeedC
   if (!events.some((event) => COMMENT_EVENTS.includes(event))) {
     throw new Error(
       `route "${route.name}": mention_only reads a comment body — name ${COMMENT_EVENTS.join(" or ")} in match_event, or drop the field`,
+    );
+  }
+  const actions = splitCsv(route.match_action);
+  if (actions && !actions.includes("created")) {
+    throw new Error(
+      `route "${route.name}": mention_only only delivers a comment's first posting — match_action has to include created, or be omitted`,
     );
   }
   const channel = channels.get(route.target_channel);
@@ -408,6 +420,13 @@ export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDeci
     // comment has to name somebody this channel maps, from somebody the channel
     // maps too. The targets are resolved here, once, and travel with the match.
     if (route.mention_only) {
+      // Only a comment's first posting can address anybody. An edit that adds a
+      // login must not ping them after the fact, and a deletion addresses
+      // nobody — #36 lists both as things this feature does not do.
+      if (event.action !== "created") {
+        ignored ??= { route, reason: "mention_only" };
+        continue;
+      }
       const mentions = resolveMentionTargets(
         commentBodyOf(event.payload),
         normalizeMentionMap(channel.mention_map),

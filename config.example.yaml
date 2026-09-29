@@ -42,6 +42,9 @@ channels:
     # A login that is not in this map is never mentioned, and login text found in
     # a payload is never rendered as a mention on its own. Deleting a line is how
     # you stop mentioning somebody; the map is per channel.
+    #
+    # The value has to be a person: `all` (and `here`) address the whole chat in
+    # Feishu, so they are rejected here rather than quietly pinging a group.
     # mention_map:
     #   octocat: "REPLACE_WITH_FEISHU_USER_ID"
     enabled: true
@@ -181,14 +184,21 @@ routes:
   # Example: only the comments that address somebody this channel maps.
   # `issue_comment` stays opt-in, and `mention_only` narrows it further: the
   # comment has to name a mapped login in its plain text — fenced and inline code
-  # excluded, e-mail addresses, `@all` and `@org/team` never counted — and its
-  # author has to be mapped too, so a stranger on a public repository cannot @ a
-  # teammate through notify-bus. At most 5 people are mentioned, once each, in
-  # the order the comment named them, all in the one card. A comment that names
-  # nobody mapped is refused (`mention_only`), not delivered to the whole group.
+  # excluded, e-mail addresses, `@all`, `@org/team`, `@alice_smith` and a mention
+  # written inside a URL never counted — and its author has to be mapped too, so
+  # a stranger on a public repository cannot @ a teammate through notify-bus. At
+  # most 5 people are mentioned, once each per person — two logins mapped to one
+  # Feishu id are one person — in the order the comment named them, all in the
+  # one card. A comment that names nobody mapped is refused (`mention_only`), not
+  # delivered to the whole group.
+  #
+  # Only a comment's first posting is read: editing a comment to add an @ does
+  # not notify, and a deleted comment notifies nobody. `match_action: created`
+  # says that in the config, and the route enforces it either way.
   # - name: mention-only-comments
   #   match_repo: "*"
   #   match_event: issue_comment
+  #   match_action: created
   #   mention_only: true
   #   target_channel: team-feishu
   #   priority: 50
@@ -198,6 +208,7 @@ routes:
   # - name: mention-only-review-comments
   #   match_repo: "*"
   #   match_event: pull_request_review_comment
+  #   match_action: created
   #   mention_only: true
   #   target_channel: team-feishu
   #   priority: 50
