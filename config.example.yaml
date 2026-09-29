@@ -137,9 +137,14 @@ routes:
 
   # Example: match every event except known noise. Omit `match_event` to match
   # all event types — unlike match_repo, event lists intentionally do not use `*`.
+  # The result events are in this list as well: they are opt-in, and a single run
+  # reports itself several times, so an unlisted `workflow_run` would deliver the
+  # whole run — not just its failures. Enabling this example does not take them
+  # away from a failures-only route of your own, further down: an exclusion is
+  # route-local, and a later route still receives what this one drops.
   # - name: all-except-noise
   #   match_repo: "*"
-  #   exclude_event: create,delete,label,milestone,status,check_run,check_suite,workflow_job,project,project_card,project_column,page_build,meta,security_and_analysis
+  #   exclude_event: create,delete,label,milestone,status,check_run,check_suite,workflow_job,workflow_run,deployment_status,project,project_card,project_column,page_build,meta,security_and_analysis
   #   target_channel: team-feishu
   #   priority: 200
 
