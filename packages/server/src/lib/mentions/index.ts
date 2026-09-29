@@ -76,13 +76,25 @@ function normalizeLogin(login: string): string {
 }
 
 /**
+ * The content of a line once its blockquote and list markers are taken off.
+ *
+ * A fence inside a quote (`> ``` `) or a list item (`- ``` `) is still a fence,
+ * and what it wraps is still code — the markers in front of it are not part of
+ * the text it protects. Only the markers go: a quoted *sentence* keeps its text,
+ * so `> @alice please look` still addresses somebody.
+ */
+function containerContent(line: string): string {
+  return line.replace(/^\s*(?:(?:>|[-*+]|\d+[.)])\s*)*/, "");
+}
+
+/**
  * Whether a line closes a fence opened with `opening`.
  *
  * A fence closes on a run of the same character that is *at least* as long as
  * the opening one, and nothing else on the line.
  */
-function closesFence(line: string, opening: string): boolean {
-  const trimmed = line.trim();
+function closesFence(content: string, opening: string): boolean {
+  const trimmed = content.trim();
   if (trimmed.length < opening.length || trimmed[0] !== opening[0]) return false;
   return [...trimmed].every((character) => character === opening[0]);
 }
@@ -94,20 +106,23 @@ function closesFence(line: string, opening: string): boolean {
  * the length is what decides where a block ends: a four-backtick fence may
  * contain a three-backtick one, and a regex that closes on the first three
  * backticks it sees reads the rest of that block as text — the case that leaked
- * a mention out of a quoted code block (#36). An unclosed fence runs to the end
- * of the comment, as Markdown says it does.
+ * a mention out of a quoted code block (#36). The line's container markers are
+ * stripped first, so a fence quoted in a reply or sitting in a list item is
+ * recognized like any other. An unclosed fence runs to the end of the comment,
+ * as Markdown says it does.
  */
 function stripFences(text: string): string {
   const kept: string[] = [];
   let opening = "";
   for (const line of text.split("\n")) {
+    const content = containerContent(line);
     if (opening === "") {
-      const fence = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+      const fence = /^(`{3,}|~{3,})/.exec(content)?.[1];
       if (fence === undefined) kept.push(line);
       else opening = fence;
       continue;
     }
-    if (closesFence(line, opening)) opening = "";
+    if (closesFence(content, opening)) opening = "";
   }
   return kept.join("\n");
 }

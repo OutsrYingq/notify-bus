@@ -120,6 +120,27 @@ describe("resolveMentionTargets", () => {
     expect(targets("```\n@alice\n````\nbut @bob please")?.logins).toEqual(["bob"]);
   });
 
+  it("keeps a fence quoted in a reply as code", () => {
+    // A fence inside a blockquote is still a fence; what it wraps is still code.
+    expect(targets("> ```\n> @alice\n> ```")).toBeUndefined();
+  });
+
+  it("keeps a fence inside a list item as code", () => {
+    expect(targets("- ```\n  @alice\n  ```")).toBeUndefined();
+  });
+
+  it("still reads a quoted sentence that is not code", () => {
+    // Only the container markers come off: a quote is a quote, and a list item
+    // is a list item — neither is a code block by itself.
+    expect(targets("> @alice please look")?.logins).toEqual(["alice"]);
+    expect(targets("- @bob can you check this")?.logins).toEqual(["bob"]);
+  });
+
+  it("reads what follows a quoted fence that closed", () => {
+    expect(targets("> ```\n> @alice\n> ```\nthanks @bob")?.logins).toEqual(["bob"]);
+    expect(targets("- ```\n  @alice\n  ```\n  cc @bob")?.logins).toEqual(["bob"]);
+  });
+
   it("still reads the plain text around a code block", () => {
     expect(targets("```\n@bob\n```\nbut @alice please")?.logins).toEqual(["alice"]);
   });
