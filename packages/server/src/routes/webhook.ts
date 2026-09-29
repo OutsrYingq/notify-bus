@@ -148,9 +148,8 @@ export function buildWebhookRoute(deps: WebhookDeps) {
       }
       const matched = decision.match;
 
-      // A `mention_only` route resolved its targets once, while deciding; the
-      // card renders that same result instead of reading the comment again, so
-      // the people who were filtered on are the people who get mentioned (#36).
+      // The route resolved these while deciding; the card renders the same result
+      // rather than reading the comment again.
       if (matched.mentions) message.metadata[MENTIONS_METADATA_KEY] = matched.mentions;
 
       const template = findTemplate(deps.config, eventType)?.template;

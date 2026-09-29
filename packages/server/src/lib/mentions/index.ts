@@ -1,17 +1,16 @@
 /**
  * Targeted @ mentions (#36).
  *
- * GitHub knows who a comment names; Feishu renders a real mention only from
- * markup. This module is the one place that turns the first into the second: a
- * route's `mention_only` policy and the card that is finally sent both read the
- * result of a single parse, carried on `EventMessage.metadata`, so the decision
- * and its card cannot disagree about who was addressed.
+ * GitHub names people in text; Feishu renders a mention only from markup. This
+ * module is the one place that turns the first into the second: a route's
+ * `mention_only` policy and the card that is finally sent read the same parse,
+ * carried on `EventMessage.metadata`, so they cannot disagree about who was
+ * addressed.
  *
- * The first version maps logins to Feishu `user_id`s by hand in the channel
- * config, on the strength of a spike in a real test group: a custom-bot schema
- * 2.0 card with `<at id=<user_id>></at>` came back `code: 0`, rendered as a real
- * mention, and reached the user as a client notification. Nothing here fetches
- * contacts, does OAuth, manages users, or falls back to `open_id`.
+ * Logins map to Feishu `user_id`s by hand in the channel config — the id type a
+ * spike in a real group verified (`<at id=<user_id>>` in a schema 2.0 card,
+ * `code: 0`, client notification received). No contacts API, no OAuth, no
+ * `open_id` fallback.
  */
 import type { EventMessage } from "../../types";
 
@@ -27,43 +26,26 @@ export interface MentionTargets {
   readonly userIds: readonly string[];
 }
 
-/**
- * How many people one card may @.
- *
- * Conservative on purpose: the point of the policy is a targeted ping, and a
- * comment naming a crowd should not become one.
- */
+/** How many people one card may @. A crowd in a comment must not become one. */
 export const MAX_MENTIONS = 5;
 
 /**
- * The `metadata` key a resolved decision travels under.
- *
- * Internal plumbing: `EventMessage`'s own shape is unchanged, and nothing
- * outside this package reads the key.
+ * The `metadata` key a resolved decision travels under: internal plumbing, so
+ * `EventMessage`'s own shape stays as it is.
  */
 export const MENTIONS_METADATA_KEY = "mentions";
 
-/**
- * Names that address a whole chat rather than a person.
- *
- * Used for both sides of the map: a *login* of this name would never be read
- * out of a comment, and a Feishu *id* of this name (`<at id=all>`) would ping
- * everyone in the group. Neither may ever reach a card.
- */
+/** Names that address a whole chat rather than a person. */
 const RESERVED = new Set(["all", "here"]);
 
-/** Whether a login or Feishu id names a whole chat instead of one person. */
+/** Whether a login or a Feishu id names a whole chat instead of one person. */
 export function isReservedMention(name: string): boolean {
   return RESERVED.has(normalizeLogin(name));
 }
 
 /**
- * `@login` at a mention position.
- *
- * The preceding character matters, and each exclusion is a real false positive:
- * `foo@bar.com`, `user+tag@host` and `first.last@host` are addresses; a mention
- * in `https://example.com/@alice` is a path; `\@alice` was escaped; and `@@alice`
- * is not an address either.
+ * `@login` at a mention position. The preceding character rules out an address
+ * (`alice@carol.com`), a path (`example.com/@alice`), an escape and a doubled `@`.
  */
 const MENTION = /(?:^|[^\w.+%\\/@-])@([a-z0-9][a-z0-9-]{0,38})/gi;
 
@@ -76,23 +58,15 @@ function normalizeLogin(login: string): string {
 }
 
 /**
- * The content of a line once its blockquote and list markers are taken off.
- *
- * A fence inside a quote (`> ``` `) or a list item (`- ``` `) is still a fence,
- * and what it wraps is still code — the markers in front of it are not part of
- * the text it protects. Only the markers go: a quoted *sentence* keeps its text,
- * so `> @alice please look` still addresses somebody.
+ * A line's content once its blockquote and list markers are stripped, so a fence
+ * inside a quote or a list item reads like any other. Only the markers go: a
+ * quoted sentence keeps its text.
  */
 function containerContent(line: string): string {
   return line.replace(/^\s*(?:(?:>|[-*+]|\d+[.)])\s*)*/, "");
 }
 
-/**
- * Whether a line closes a fence opened with `opening`.
- *
- * A fence closes on a run of the same character that is *at least* as long as
- * the opening one, and nothing else on the line.
- */
+/** Whether a line closes a fence: the same character, at least as long, alone. */
 function closesFence(content: string, opening: string): boolean {
   const trimmed = content.trim();
   if (trimmed.length < opening.length || trimmed[0] !== opening[0]) return false;
@@ -100,16 +74,10 @@ function closesFence(content: string, opening: string): boolean {
 }
 
 /**
- * Drop fenced code blocks.
- *
- * Fences are found line by line rather than with one regular expression, because
- * the length is what decides where a block ends: a four-backtick fence may
- * contain a three-backtick one, and a regex that closes on the first three
- * backticks it sees reads the rest of that block as text — the case that leaked
- * a mention out of a quoted code block (#36). The line's container markers are
- * stripped first, so a fence quoted in a reply or sitting in a list item is
- * recognized like any other. An unclosed fence runs to the end of the comment,
- * as Markdown says it does.
+ * Drop fenced code blocks, line by line — the length decides where a block ends:
+ * a four-backtick fence may quote a three-backtick one, and only a run at least
+ * as long as the opening closes it. An unclosed fence runs to the end, as
+ * Markdown says it does.
  */
 function stripFences(text: string): string {
   const kept: string[] = [];
@@ -127,14 +95,7 @@ function stripFences(text: string): string {
   return kept.join("\n");
 }
 
-/**
- * Drop code before looking for mentions.
- *
- * A mention inside code is code — reading it would ping somebody because a
- * comment quoted a command. Fences go first (they decide what the rest of the
- * comment even is), then inline code, where a run of backticks counts (` ``x`` `
- * is how a comment writes code that itself contains a backtick).
- */
+/** Drop code: fences first, then inline code, where a run of backticks counts. */
 function stripCode(text: string): string {
   return stripFences(text).replace(/`+[^`\n]*`+/g, " ");
 }
@@ -167,18 +128,12 @@ export function commentBodyOf(payload: Record<string, unknown>): string {
  * The @ targets a `mention_only` route may send, or `undefined` when the policy
  * refuses the comment.
  *
- * Two things have to hold, and both err towards silence:
- *
- *   - the comment's plain text names somebody this channel maps, and
- *   - the comment comes from somebody this channel maps as well, so a stranger
- *     on a public repository cannot make notify-bus @ a teammate.
- *
- * A login has to be a whole token: `@alice_smith`, `example.com/@alice`,
- * `\@alice`, `@alice/notify-bus` and anything inside code name nobody. Matches
- * are case-insensitive, one @ per *person* — two logins mapped to the same
- * Feishu id are that person, and are mentioned once — and capped at
- * {@link MAX_MENTIONS}. Whether the event is one that may mention at all is the
- * caller's decision: an edit or a deletion is not (#36).
+ * Both halves err towards silence: the plain text has to name, as a whole token,
+ * a login this channel maps — and the comment has to come from somebody the
+ * channel maps too, so a stranger on a public repository cannot make notify-bus @
+ * a teammate. One @ per person (two logins mapped to one id are that person),
+ * capped at {@link MAX_MENTIONS}. Whether the event may mention at all is the
+ * caller's decision: an edit or a deletion is not.
  */
 export function resolveMentionTargets(
   body: string,

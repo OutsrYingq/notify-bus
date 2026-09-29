@@ -11,11 +11,9 @@ import type { SeedChannel } from "../config";
 import type { DispatchResult, EventMessage } from "../../types";
 
 /**
- * Convert a YAML seed channel (snake_case) to adapter config (camelCase).
- *
- * The translation is a whitelist: a field that is not carried here never reaches
- * the adapter, which is how `mention_map` would have been dropped in silence
- * (#36), taking every @ with it.
+ * Convert a YAML seed channel (snake_case) to adapter config (camelCase). The
+ * whitelist is literal — a field not carried here never reaches the adapter — so
+ * `mention_map` had to be added explicitly.
  */
 export function seedChannelToConfig(channel: SeedChannel): Readonly<Record<string, unknown>> {
   const config: Record<string, unknown> = { webhookUrl: channel.webhook_url };

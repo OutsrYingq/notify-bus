@@ -30,9 +30,8 @@ export interface SeedChannel {
   enabled?: boolean;
   /**
    * GitHub login → Feishu `user_id`, for this channel's targeted @ mentions.
-   * Logins match case-insensitively and the map only applies to this channel.
-   * Only what is written here can become a real mention — a login read out of a
-   * payload never can. See `lib/mentions`.
+   * Case-insensitive, channel-scoped, and the only source of a real @ — a login
+   * read out of a payload is never one. See `lib/mentions`.
    */
   mention_map?: Record<string, string>;
 }
@@ -69,10 +68,9 @@ export interface SeedRoute {
    */
   match_payload?: PayloadCondition | PayloadCondition[];
   /**
-   * Deliver only when the comment's plain text @-mentions somebody this route's
-   * channel maps, and the comment comes from somebody the channel maps too.
-   * Requires `match_event` to name a comment event; a route that omits this
-   * field keeps delivering every comment it matches. See `lib/mentions`.
+   * Deliver only a comment's first posting, and only when its plain text names
+   * somebody this route's channel maps; omitted, every matched comment is
+   * delivered. See `lib/mentions`.
    */
   mention_only?: boolean;
   target_channel: string; // by name, resolved to a SeedChannel at match time
@@ -135,12 +133,9 @@ const FEISHU_ID = /^[a-z0-9_-]+$/i;
 const COMMENT_EVENTS = ["issue_comment", "pull_request_review_comment"];
 
 /**
- * Reject a `mention_map` that cannot be read as login → id pairs.
- *
- * The map is what allows an @ at all: a mistyped key silently disables one
- * person's mentions, a duplicate disables whichever of the two the matcher
- * happens to reach, and a malformed id can make an entire card fail to send.
- * All of it fails here instead, naming the channel (#36).
+ * Reject a `mention_map` that cannot be read as login → id pairs: a mistyped key
+ * would silently disable one person's mentions, and a malformed id can make a
+ * whole card fail to send. Fails at load instead, naming the channel.
  */
 function assertMentionMap(channel: SeedChannel): void {
   const map = channel.mention_map;
@@ -166,8 +161,6 @@ function assertMentionMap(channel: SeedChannel): void {
       reject(`"${login}" has a user id that cannot be sent as a mention`);
     }
     if (isReservedMention(userId)) {
-      // `<at id=all>` addresses the whole chat, which is exactly what this
-      // feature must never do — a map entry cannot smuggle it in.
       reject(`"${login}" maps to a user id that addresses the whole chat`);
     }
     const duplicate = written.get(key);
@@ -178,14 +171,10 @@ function assertMentionMap(channel: SeedChannel): void {
 }
 
 /**
- * Reject `mention_only` where it could never be satisfied.
- *
- * The policy reads a comment body, so on any other event it would refuse every
- * delivery: a route that looks enabled and is silently dead. The same goes for a
- * channel with no `mention_map` — nobody is mappable, so nobody is ever
- * mentioned — and for an action whitelist that leaves out `created`, the one
- * action the policy reads. Saying so at load is the difference between a config
- * mistake and a mystery.
+ * Reject `mention_only` where it could never be satisfied: on an event with no
+ * comment body, on a channel that maps nobody, or behind an action whitelist
+ * without `created`. Each would be a route that looks enabled and is silently
+ * dead.
  */
 function assertMentionOnly(route: SeedRoute, channels: ReadonlyMap<string, SeedChannel>): void {
   const mentionOnly = route.mention_only;
@@ -416,13 +405,11 @@ export function resolveRoute(config: SeedConfig, event: EventMessage): RouteDeci
       continue;
     }
 
-    // `mention_only` is the narrowest gate and the only one that reads text: the
-    // comment has to name somebody this channel maps, from somebody the channel
-    // maps too. The targets are resolved here, once, and travel with the match.
+    // The narrowest gate, and the only one that reads text; the targets are
+    // resolved here, once, and travel with the match.
     if (route.mention_only) {
-      // Only a comment's first posting can address anybody. An edit that adds a
-      // login must not ping them after the fact, and a deletion addresses
-      // nobody — #36 lists both as things this feature does not do.
+      // Only a first posting can address anybody: an edit must not ping after
+      // the fact, and a deletion addresses nobody.
       if (event.action !== "created") {
         ignored ??= { route, reason: "mention_only" };
         continue;

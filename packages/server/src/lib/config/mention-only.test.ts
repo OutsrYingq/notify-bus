@@ -1,9 +1,7 @@
 /**
- * The `mention_only` route policy, and the mention configuration it depends on
- * (#36).
- *
- * The policy is route-local and never global: a comment route that does not ask
- * for it keeps delivering every comment, which is what makes this opt-in.
+ * The `mention_only` route policy and the configuration it depends on (#36). The
+ * policy is route-local: a comment route that does not ask for it keeps
+ * delivering every comment, which is what makes it opt-in.
  */
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -32,11 +30,9 @@ function mentionRoute(target: string, event = "issue_comment"): SeedRoute {
 }
 
 /**
- * A comment event: who wrote it, what it says, and which action posted it.
- *
- * The action matters: a `mention_only` route only reads a comment's first
- * posting, so a helper that left it out (or pinned it to `created`) would hide
- * the edit case entirely (#36).
+ * A comment event: who wrote it, what it says, and which action posted it. The
+ * action is a parameter because a `mention_only` route reads only a comment's
+ * first posting — a helper that pinned it would hide the edit case.
  */
 function comment(event: string, author: string, body: string, action = "created"): EventMessage {
   return {
@@ -102,8 +98,8 @@ describe("mention_only · delivery", () => {
   });
 
   it("refuses a comment an edit added the mention to", () => {
-    // #36's non-goals: a mention that appears because somebody edited the
-    // comment afterwards must not ping anyone, on either comment event.
+    // #36's non-goals: a mention that only appeared because somebody edited the
+    // comment must not ping anyone, on either comment event.
     for (const event of ["issue_comment", "pull_request_review_comment"]) {
       const config: SeedConfig = {
         channels: [channel("mapped", MAP)],
@@ -125,10 +121,8 @@ describe("mention_only · delivery", () => {
 
   it("reports what the documented shape actually answers", () => {
     // The examples write `match_action: created`, so an edit is turned away by
-    // that whitelist before the mention gate runs: the response says `no_route`,
-    // not `mention_only`. Without the whitelist the same event records the
-    // policy itself. Both send nothing — the reason is what differs, and it is
-    // what a caller reading the response sees.
+    // that whitelist before the mention gate runs — `no_route`, not
+    // `mention_only`. Without it the gate records itself. Both send nothing.
     const documented: SeedConfig = {
       channels: [channel("mapped", MAP)],
       routes: [{ ...mentionRoute("mapped"), match_action: "created" }],

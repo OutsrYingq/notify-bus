@@ -137,20 +137,14 @@ export function md(text: string | undefined): string {
 // ─── targeted mentions ─────────────────────────────────────────────────────
 
 /**
- * A real Feishu mention, for the `user_id`s a channel's `mention_map` holds.
- *
- * Only a mapped id may be interpolated here. Card markup is *generated*, never
- * assembled from a payload: the text around it still goes through {@link md}, so
- * a comment cannot smuggle a mention of its own (#36).
- *
- * The form is the one the test-group spike verified — `<at id=<user_id>>` with
- * no quotes, inside a schema 2.0 card — which rendered as a mention and reached
- * the client as a notification.
+ * A real Feishu mention, for the `user_id`s a channel's `mention_map` holds. Only
+ * a mapped id may be interpolated — the markup is generated here, never assembled
+ * from a payload, and the text around it still goes through {@link md}. The form
+ * is the one the test-group spike verified.
  */
 export function at(userId: string): string {
-  // `all` addresses the whole chat. The loader rejects a map that holds it, but
-  // nothing that *renders* a mention may rely on that: a caller which skipped
-  // the config path must fail loudly rather than ping a group (#36).
+  // `all` addresses the whole chat. The loader rejects a map holding it, but a
+  // caller that skipped the config path must fail loudly rather than ping a group.
   if (isReservedMention(userId)) {
     throw new Error(`refusing to mention the reserved Feishu id "${userId}"`);
   }
@@ -159,10 +153,8 @@ export function at(userId: string): string {
 
 /**
  * The @ line for the targets a `mention_only` route resolved for this event, or
- * `""` when the event names nobody.
- *
- * Reading the route's own result — not parsing the comment again — is what keeps
- * the card's recipients identical to the ones the delivery was decided on.
+ * `""` when it names nobody. Reading the route's own result — not parsing the
+ * comment again — is what keeps the card and the decision identical.
  */
 export function mentionLine(message: EventMessage): string {
   return readMentionTargets(message)

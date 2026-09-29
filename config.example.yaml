@@ -28,23 +28,16 @@ channels:
     type: feishu
     webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/REPLACE_ME
     secret: "" # optional: feishu signing secret, if enabled on the bot
-    # Who this channel is allowed to @. The key is a GitHub login (matched
-    # case-insensitively), the value the person's Feishu `user_id` — the id type
-    # that was verified against a real group: a schema 2.0 card with
-    # `<at id=<user_id>>` renders as a mention and reaches the client.
-    #
-    # A real @ needs all four of these, and until they all hold nothing is sent:
+    # Who this channel may @: a GitHub login (case-insensitive) → Feishu
+    # `user_id`, the id type verified against a real group. A real @ needs all
+    # four, and nothing is sent until they all hold:
     #   1. GitHub is sending that event (subscribe it on the repository);
     #   2. a route here names it and its conditions hold;
     #   3. this map holds the login that was named;
-    #   4. the event itself names that login — a comment's plain text, or a
-    #      review request's reviewer.
-    # A login that is not in this map is never mentioned, and login text found in
-    # a payload is never rendered as a mention on its own. Deleting a line is how
-    # you stop mentioning somebody; the map is per channel.
-    #
-    # The value has to be a person: `all` (and `here`) address the whole chat in
-    # Feishu, so they are rejected here rather than quietly pinging a group.
+    #   4. the event names that login — a comment's text, or a review request.
+    # Login text in a payload never becomes a mention on its own, the map is per
+    # channel (deleting a line is how you stop mentioning somebody), and a value
+    # has to be a person: `all` / `here` address the whole chat and are rejected.
     # mention_map:
     #   octocat: "REPLACE_WITH_FEISHU_USER_ID"
     enabled: true
@@ -184,23 +177,18 @@ routes:
   # Example: only the comments that address somebody this channel maps.
   # `issue_comment` stays opt-in, and `mention_only` narrows it further: the
   # comment has to name a mapped login in its plain text — fenced and inline code
-  # excluded, e-mail addresses, `@all`, `@org/team`, `@alice_smith` and a mention
-  # written inside a URL never counted — and its author has to be mapped too, so
-  # a stranger on a public repository cannot @ a teammate through notify-bus. At
-  # most 5 people are mentioned, once each per person — two logins mapped to one
-  # Feishu id are one person — in the order the comment named them, all in the
-  # one card. A comment that names nobody mapped is refused (`mention_only`), not
-  # delivered to the whole group.
+  # excluded, and e-mail addresses, `@all`, `@org/team`, `@alice_smith` and a
+  # mention inside a URL never counted — and its author has to be mapped too, so
+  # a stranger cannot @ a teammate. At most 5 people, once per person (two logins
+  # mapped to one Feishu id are one person), in the order they were named, all in
+  # the one card.
   #
-  # Only a comment's first posting is read: editing a comment to add an @ does
-  # not notify, and a deleted comment notifies nobody. `match_action: created`
-  # says that in the config, and the route enforces it either way.
-  #
-  # What "code" means here is listed above, and it is this project's own reading
-  # of Markdown rather than a full parser: a fenced block, wherever it sits
-  # (including quoted in a reply or inside a list item), and inline code never
-  # mention anybody — but a four-space-indented code block is not recognized as
-  # code, so a login inside one can still be delivered.
+  # Only a comment's first posting is read: editing one to add an @ does not
+  # notify, and a deleted comment notifies nobody — `match_action: created` says
+  # so here, and the route enforces it either way. "Code" is this project's own
+  # reading of Markdown, not a full parser: fenced blocks anywhere (including
+  # quoted in a reply or inside a list item) and inline code never mention
+  # anybody, but a four-space-indented block is not recognized as code.
   # - name: mention-only-comments
   #   match_repo: "*"
   #   match_event: issue_comment

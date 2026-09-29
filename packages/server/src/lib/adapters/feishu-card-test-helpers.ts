@@ -124,10 +124,9 @@ export function elementMarkdown(elements: unknown[]): string {
  * `buildCard()` directly cannot see the template/composition layer, which is
  * where #16's bug lived and what #17 asked the tests to cover.
  *
- * `opts` passes in the two channel/route inputs a card can depend on beyond its
- * event (#36): the channel's mention map, and the targets a `mention_only` route
- * already resolved — which production carries on `message.metadata`, exactly as
- * this does.
+ * `opts` passes the two inputs a card can depend on beyond its event (#36): the
+ * channel's mention map, and the targets a route already resolved, which
+ * production carries on `message.metadata` exactly as this does.
  */
 export function prodCard(
   event: string,

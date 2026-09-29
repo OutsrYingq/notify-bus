@@ -1,10 +1,7 @@
 /**
- * Mention parsing (#36).
- *
- * The rules are deliberately conservative: a mention that was not meant as one
- * must never become a Feishu @, and a login the channel does not map must never
- * become one either. Everything here is pure text and a map — no network, no
- * payload beyond the comment body.
+ * Mention parsing (#36). The rules err towards silence: text that was not meant
+ * as a mention must never become a Feishu @, and an unmapped login never does.
+ * Pure text and a map — no network, no payload beyond the comment body.
  */
 import { describe, expect, it } from "bun:test";
 import {
@@ -18,10 +15,10 @@ import {
 import type { EventMessage } from "../../types";
 
 /**
- * A small team. `Bob` is written in mixed case on purpose, `og` is an old handle
- * for `alice` (one person, two logins), and `all` and `platform-team` are mapped
- * so the reserved-word and team-reference rules are tested against a login that
- * *would* match if they were read naively.
+ * A small team. `Bob` is mixed case, `og` is an old handle for `alice` (one
+ * person, two logins), and `all` / `platform-team` are mapped so the
+ * reserved-word and team-reference rules are tested against logins that *would*
+ * match if they were read naively.
  */
 const MAP = {
   alice: "ou_alice",
@@ -84,34 +81,26 @@ describe("resolveMentionTargets", () => {
   it("ignores a mention inside a fenced code block", () => {
     expect(targets("try this\n```\n@alice deploy\n```\n")).toBeUndefined();
     expect(targets("~~~\n@alice\n~~~")).toBeUndefined();
+    expect(targets("````\n@alice\n````")).toBeUndefined();
   });
 
   it("ignores a mention inside inline code", () => {
     expect(targets("the log said `@alice failed` is all")).toBeUndefined();
     expect(targets("write `@alice` in the issue")).toBeUndefined();
-  });
-
-  it("ignores inline code written with a run of backticks", () => {
-    // ` ``x`` ` is how a comment writes code that itself contains a backtick.
+    // A run of backticks is how code that itself contains a backtick is written.
     expect(targets("the flag is ``--user=@alice`` here")).toBeUndefined();
   });
 
-  it("ignores a fenced block of four backticks", () => {
-    expect(targets("````\n@alice\n````")).toBeUndefined();
-  });
-
   it("keeps a shorter fence inside a longer one as code", () => {
-    // A four-backtick fence may quote a three-backtick block. Treating a fence
-    // as closed by a *shorter* run would take the quoted block for the comment's
-    // own text, and ping whoever it names.
+    // Closing on a *shorter* run would take a quoted block for the comment's own
+    // text, and ping whoever it names.
     expect(targets("````\n```\n@alice\n```\n````")).toBeUndefined();
     expect(targets("````\n```js\n@alice\n```\n````")).toBeUndefined();
     expect(targets("````\n@alice\n```\n@bob\n````")).toBeUndefined();
   });
 
   it("runs an unclosed fence to the end of the comment", () => {
-    // Markdown says an unterminated fence swallows the rest, so what follows is
-    // still code — the alternative would ping somebody over a stray ```.
+    // Markdown swallows the rest, so what follows is code.
     expect(targets("```\n@alice")).toBeUndefined();
     expect(targets("look:\n~~~\n@alice and @bob")).toBeUndefined();
   });
@@ -120,18 +109,14 @@ describe("resolveMentionTargets", () => {
     expect(targets("```\n@alice\n````\nbut @bob please")?.logins).toEqual(["bob"]);
   });
 
-  it("keeps a fence quoted in a reply as code", () => {
-    // A fence inside a blockquote is still a fence; what it wraps is still code.
+  it("keeps a fence inside a quote or a list item as code", () => {
     expect(targets("> ```\n> @alice\n> ```")).toBeUndefined();
-  });
-
-  it("keeps a fence inside a list item as code", () => {
     expect(targets("- ```\n  @alice\n  ```")).toBeUndefined();
   });
 
   it("still reads a quoted sentence that is not code", () => {
-    // Only the container markers come off: a quote is a quote, and a list item
-    // is a list item — neither is a code block by itself.
+    // Only the container markers come off: a quote is a quote, and a list item is
+    // a list item — neither is a code block by itself.
     expect(targets("> @alice please look")?.logins).toEqual(["alice"]);
     expect(targets("- @bob can you check this")?.logins).toEqual(["bob"]);
   });

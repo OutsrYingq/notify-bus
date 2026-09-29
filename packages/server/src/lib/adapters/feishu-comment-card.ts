@@ -82,10 +82,9 @@ export function buildIssueCommentCard(message: EventMessage, body: string): Feis
 
   const elements: CardElement[] = [];
 
-  // The people a `mention_only` route targeted (#36), first: on that route they
-  // are why this card is being sent at all. This is the route's own resolution
-  // rendered as markup — the comment's text below still goes through `md()`, so
-  // writing `@someone` in a comment can never mention anybody by itself.
+  // The route's own targets, first: on a `mention_only` route they are why this
+  // card exists. Generated markup — the comment text below still goes through
+  // `md()`, so writing `@someone` cannot mention anybody by itself.
   const mentions = mentionLine(message);
   if (mentions) elements.push(markdown(mentions));
 

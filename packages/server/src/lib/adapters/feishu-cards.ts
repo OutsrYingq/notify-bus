@@ -51,12 +51,10 @@ import {
 import { buildRepositoryCard } from "./feishu-repository-card";
 
 /**
- * What a card builder needs beyond the event itself.
- *
- * The channel's mention map is the one thing that is channel-scoped rather than
- * event-scoped: a builder that has to resolve a person itself (the review
- * request, which the route does not filter on) reads it from here. Everything a
- * *decision* already resolved travels on the event's metadata instead.
+ * What a card builder needs beyond the event itself: the channel's mention map,
+ * for the one builder that resolves a person on its own (the review request,
+ * which no route filters on). Everything a *decision* resolved travels on the
+ * event's metadata instead.
  */
 export interface CardContext {
   mentionMap?: Readonly<Record<string, string>>;
@@ -381,15 +379,12 @@ function prHeaderColor(action: string, merged: boolean): CardColor {
  * The review-request line for a PR card, or `undefined` when this event is not
  * one.
  *
- * A reviewer the channel maps becomes a real @; one it does not is still named,
- * in plain text — the card must not pretend to have reached somebody it cannot
- * (#36). A requested *team* stays a name: the payload does not carry its
- * members, the map does not either, and `@all` would ping a whole group for one
- * review.
- *
- * Only `review_requested` produces this line. `review_request_removed` carries
- * the same `requested_reviewer` field, so reading the field alone would announce
- * a request that was just withdrawn.
+ * A mapped reviewer becomes a real @; one that is not is still named in plain
+ * text, because the card must not pretend to have reached somebody it cannot. A
+ * requested team stays a name: its members are in neither the payload nor the
+ * map, and `@all` would ping a group for one review. Only `review_requested`
+ * produces this — `review_request_removed` carries the same `requested_reviewer`
+ * field, and reading it would announce a request that was just withdrawn.
  */
 function reviewRequestLine(
   action: string,
@@ -444,7 +439,7 @@ function buildPullRequestCard(
   if (body) elements.push(markdown(body));
 
   // Who the request is for, in the same card — a review request used to show the
-  // action badge alone and name nobody (#36).
+  // action badge alone and name nobody.
   const reviewRequest = reviewRequestLine(action, p, context);
   if (reviewRequest) elements.push(markdown(reviewRequest));
 
@@ -646,8 +641,8 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
   // Build a richer body than just "event · action": surface comment content,
   // the parent discussion's title, and org/member details when present.
   const lines: string[] = [];
-  // The people a `mention_only` route targeted (#36). Generated markup from the
-  // route's own resolution — never a mention parsed out of the comment here.
+  // The people a `mention_only` route targeted: generated markup from the route's
+  // own resolution, never a mention parsed out of the comment here.
   const mentions = mentionLine(message);
   if (mentions) lines.push(mentions);
   lines.push(`**${md(message.event)}**${message.action ? ` · ${md(message.action)}` : ""}`);
@@ -734,10 +729,8 @@ function buildFallbackCard(message: EventMessage, body: string): FeishuCard {
 
 /** Builds one event's card — the signature every dedicated builder shares. */
 /**
- * Builds one event's card — the signature every dedicated builder shares.
- *
- * The context is optional so a builder that needs nothing but the event keeps
- * the two-argument shape; only one that resolves a person itself reads it.
+ * Builds one event's card. The context is optional: only a builder that resolves
+ * a person itself reads it.
  */
 type CardBuilder = (message: EventMessage, body: string, context?: CardContext) => FeishuCard;
 
@@ -781,12 +774,11 @@ function isDedicatedEvent(event: string): event is DedicatedEvent {
 /**
  * Build a rich Feishu card for the given event, dispatching on event type.
  *
- * @param message  the rendered event. `formatted.body` carries the configured
- *                 template's markdown — possibly empty — and is folded in as
- *                 extra content. A `mention_only` route's targets ride on
- *                 `message.metadata`, so this renders what the route decided.
- * @param context  the channel-scoped map a builder needs to resolve a person
- *                 itself, for the events no route filters on.
+ * @param message  the rendered event. `formatted.body` is the template's
+ *                 markdown, possibly empty; a `mention_only` route's targets
+ *                 ride on `message.metadata`.
+ * @param context  the channel's mention map, for the builders that resolve a
+ *                 person themselves.
  */
 export function buildCard(message: EventMessage, context: CardContext = {}): FeishuCard {
   const body = message.formatted?.body ?? "";
