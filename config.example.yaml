@@ -187,8 +187,9 @@ routes:
   # notify, and a deleted comment notifies nobody — `match_action: created` says
   # so here, and the route enforces it either way. "Code" is this project's own
   # reading of Markdown, not a full parser: fenced blocks anywhere (including
-  # quoted in a reply or inside a list item) and inline code never mention
-  # anybody, but a four-space-indented block is not recognized as code.
+  # quoted in a reply or inside a list item), inline code and HTML `<code>` /
+  # `<pre>` never mention anybody, but a four-space-indented block is not
+  # recognized as code.
   # - name: mention-only-comments
   #   match_repo: "*"
   #   match_event: issue_comment

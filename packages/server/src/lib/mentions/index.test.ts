@@ -114,6 +114,19 @@ describe("resolveMentionTargets", () => {
     expect(targets("- ```\n  @alice\n  ```")).toBeUndefined();
   });
 
+  it("ignores a mention inside HTML code", () => {
+    // GitHub renders these as code, so an @ inside one is quoted text.
+    expect(targets("<code>@alice</code>")).toBeUndefined();
+    expect(targets("<pre>\n@alice\n</pre>")).toBeUndefined();
+    expect(targets("see <code>@alice</code> and <code>@bob</code>")).toBeUndefined();
+  });
+
+  it("still reads a mention after an unterminated HTML tag", () => {
+    // Nothing is code without a closing tag: a comment that discusses `<code>`
+    // must not lose the mention that follows it.
+    expect(targets("wrap it in <code> and ask @alice")?.logins).toEqual(["alice"]);
+  });
+
   it("still reads a quoted sentence that is not code", () => {
     // Only the container markers come off: a quote is a quote, and a list item is
     // a list item — neither is a code block by itself.

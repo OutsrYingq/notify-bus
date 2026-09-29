@@ -95,9 +95,18 @@ function stripFences(text: string): string {
   return kept.join("\n");
 }
 
-/** Drop code: fences first, then inline code, where a run of backticks counts. */
+/**
+ * Drop code: fences first, then inline code, where a run of backticks counts.
+ *
+ * HTML `<code>` / `<pre>` goes too — GitHub renders it as code, so an @ inside
+ * one is quoted text. A tag left unterminated is not stripped: GitHub shows it
+ * as written, and a comment that *discusses* `<code>` should not lose the
+ * mention that follows it.
+ */
 function stripCode(text: string): string {
-  return stripFences(text).replace(/`+[^`\n]*`+/g, " ");
+  return stripFences(text)
+    .replace(/<(code|pre)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/`+[^`\n]*`+/g, " ");
 }
 
 /** The lookup form of a channel's map. A missing or unreadable map is empty. */
