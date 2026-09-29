@@ -195,6 +195,12 @@ routes:
   # Only a comment's first posting is read: editing a comment to add an @ does
   # not notify, and a deleted comment notifies nobody. `match_action: created`
   # says that in the config, and the route enforces it either way.
+  #
+  # What "code" means here is listed above, and it is this project's own reading
+  # of Markdown rather than a full parser: a fenced block, wherever it sits
+  # (including quoted in a reply or inside a list item), and inline code never
+  # mention anybody — but a four-space-indented code block is not recognized as
+  # code, so a login inside one can still be delivered.
   # - name: mention-only-comments
   #   match_repo: "*"
   #   match_event: issue_comment
