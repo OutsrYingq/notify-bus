@@ -373,6 +373,56 @@ describe("loadSeedConfig", () => {
     expect(() => loadSeedConfig(path)).toThrow();
   });
 
+  /** Write a one-route config carrying the given `match_payload` line. */
+  function writeRoute(file: string, matchPayload: string): string {
+    mkdirSync(tmpDir, { recursive: true });
+    const path = join(tmpDir, file);
+    writeFileSync(
+      path,
+      [
+        "channels:",
+        "  - name: team",
+        "    type: feishu",
+        "    webhook_url: https://x",
+        "    enabled: true",
+        "routes:",
+        "  - name: noisy",
+        "    match_event: push",
+        `    match_payload: ${matchPayload}`,
+        "    target_channel: team",
+        "",
+      ].join("\n"),
+    );
+    return path;
+  }
+
+  it("accepts a single clause written without the list wrapper", () => {
+    const path = writeRoute("single-clause.yaml", "{ ref: refs/heads/main }");
+    expect(loadSeedConfig(path)?.routes?.[0]?.match_payload).toEqual({
+      ref: "refs/heads/main",
+    });
+  });
+
+  // A condition the matcher cannot read has to fail here, naming the route —
+  // not at request time, and never as "matches everything".
+  const invalidShapes: Array<[string, string]> = [
+    ["a bare key", ""],
+    ["null", "null"],
+    ["a scalar", "5"],
+    ["an empty list", "[]"],
+    ["an empty clause", "[{}]"],
+    ["a null clause", "[null]"],
+    ["a list value", "[{ ref: [a, b] }]"],
+    ["a null value", "{ ref: null }"],
+  ];
+
+  for (const [index, [shape, written]] of invalidShapes.entries()) {
+    it(`rejects match_payload written as ${shape}`, () => {
+      const path = writeRoute(`invalid-${index}.yaml`, written);
+      expect(() => loadSeedConfig(path)).toThrow(/route "noisy": match_payload/);
+    });
+  }
+
   // Cleanup once after the suite.
   it("cleanup", () => {
     rmSync(tmpDir, { recursive: true, force: true });

@@ -87,12 +87,21 @@ describe("match_payload · clause grammar", () => {
     expect(accepts({ ref: "refs/heads/main" }, { ref: "refs/heads/other" })).toBe(false);
   });
 
-  it("treats an absent condition and an empty clause list as no condition", () => {
+  it("treats an omitted condition as no condition", () => {
     const route: SeedRoute = { name: "r", match_event: "push", target_channel: "ch" };
     expect(resolveRoute(configWith([route]), event({ payload: { ref: "anything" } })).kind).toBe(
       "matched",
     );
-    expect(accepts([], { ref: "anything" })).toBe(true);
+  });
+
+  it("never reads a malformed clause as 'matches everything'", () => {
+    // A config file cannot carry these — loadSeedConfig rejects them — but a
+    // hand-built config (or a future store) must not get the dangerous reading
+    // either: an empty clause would accept every event, and the rest would
+    // throw on every event.
+    for (const condition of [[{}], [null], [5], null] as unknown[]) {
+      expect(accepts(condition as PayloadCondition, { ref: "refs/heads/main" })).toBe(false);
+    }
   });
 
   it("never matches a path the payload does not carry", () => {
@@ -134,6 +143,12 @@ describe("match_payload · clause grammar", () => {
     expect(accepts({ ref: "refs/heads/*" }, { ref: "refs/tags/v1" })).toBe(false);
     expect(accepts({ ref: "*/hotfix" }, { ref: "refs/heads/hotfix" })).toBe(true);
     expect(accepts({ ref: "*" }, { ref: "refs/heads/anything" })).toBe(true);
+  });
+
+  it("lets `*` span a newline, as 'any run of characters' promises", () => {
+    // A comment body is multi-line, so a `*` that stopped at the first newline
+    // would quietly miss any future condition written over one (#36).
+    expect(accepts({ body: "a*b" }, { body: "a\nb" })).toBe(true);
   });
 
   it("reads $default_branch from the payload instead of assuming main", () => {
@@ -297,6 +312,11 @@ describe("shipped config · push policy (#34)", () => {
       name: "a push whose payload carries no default branch",
       payload: { ref: "refs/heads/main", repository: {} },
       outcome: "refused",
+    },
+    {
+      name: "a newly created branch on a payload that carries no default branch",
+      payload: { ref: "refs/heads/feature/login", created: true, repository: {} },
+      outcome: "delivered",
     },
   ];
 

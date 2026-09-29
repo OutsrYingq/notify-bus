@@ -42,10 +42,12 @@ routes:
   # cannot express — a branch, a CI conclusion, a deployment state. It is a list
   # of clauses OR'd together, each clause a map of dotted payload paths AND'd
   # together; a single clause may be written without the list wrapper. An
-  # expected value is compared as text, so `true` matches a `true` payload field,
-  # `*` matches any run of characters, and `$default_branch` stands for
-  # `payload.repository.default_branch`. A field the payload does not carry never
-  # matches — a missing `deleted` is not a `false` one.
+  # expected value is compared as text, so `true` matches a `true` payload field;
+  # `*` matches any run of characters, newlines included; and `$default_branch`
+  # stands for `payload.repository.default_branch`. A field the payload does not
+  # carry never matches — a missing `deleted` is not a `false` one. A malformed
+  # condition (a scalar, `null`, an empty clause, an empty list) is rejected when
+  # the config loads, naming the route, rather than read as "matches everything".
   #
   # Some events are different observation points on the same activity — pick by
   # how your tooling reports, expecting one notification per source you add:
@@ -70,9 +72,11 @@ routes:
   # push is only noteworthy where it matched anyway, so no clause keys off
   # `forced`. No deletion notifies either — clause one needs `created`, and
   # clause two asks for `deleted: false`, which keeps a default-branch removal
-  # out. A payload carrying no `repository.default_branch` matches nothing
-  # rather than guessing `main`: a repo whose default branch is `develop` gets
-  # that branch here, and `main` on it stays silent.
+  # out. A payload carrying no `repository.default_branch` cannot satisfy clause
+  # two — that update is refused rather than matched against a guessed `main` —
+  # while clause one never reads the field, so a new branch is still delivered
+  # either way. A repo whose default branch is `develop` gets that branch here,
+  # and `main` on it stays silent.
   #
   # For further important branches, add a clause of your own rather than a
   # second route, for example:

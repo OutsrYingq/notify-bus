@@ -49,8 +49,9 @@ export interface SeedRoute {
    * a branch, a CI conclusion, a deployment state. Clauses are OR'd (one clause
    * per situation the route delivers) and the keys inside a clause are AND'd.
    * A single clause may be written without the list wrapper. Omitted = no
-   * condition, so routes written before this field keep their behavior.
-   * See {@link matchPayloadConditions}.
+   * condition, so routes written before this field keep their behavior; a shape
+   * the matcher cannot read is rejected when the config loads rather than read
+   * as "matches everything". See {@link matchPayloadConditions}.
    */
   match_payload?: PayloadCondition | PayloadCondition[];
   target_channel: string; // by name, resolved to a SeedChannel at match time
@@ -72,17 +73,51 @@ export interface SeedConfig {
 }
 
 /**
+ * Reject a `match_payload` the matcher cannot read as conditions.
+ *
+ * A broken config is a deployment error, and this is where it belongs: `null`
+ * would throw on every event, and an empty clause would silently accept every
+ * event — the one reading a condition must never have. Failing at load names
+ * the route and the path while the operator is still looking at the file.
+ */
+function assertMatchPayload(route: SeedRoute): void {
+  const condition = route.match_payload;
+  if (condition === undefined) return;
+  const reject = (detail: string): never => {
+    throw new Error(`route "${route.name}": match_payload ${detail}`);
+  };
+  const clauses = Array.isArray(condition) ? condition : [condition];
+  if (clauses.length === 0) reject("needs at least one clause, or has to be omitted");
+  for (const clause of clauses) {
+    if (typeof clause !== "object" || clause === null || Array.isArray(clause)) {
+      // A bare `match_payload:` reads as null; the likeliest intent is "no
+      // condition", so the message points at omitting the key.
+      reject("must be a map of path: value or a list of those maps — omit it for no condition");
+    }
+    const entries = Object.entries(clause);
+    if (entries.length === 0) reject("clauses have to name at least one path");
+    for (const [path, value] of entries) {
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        reject(`${path} must compare against a string, number or boolean`);
+      }
+    }
+  }
+}
+
+/**
  * Load the YAML seed config from disk.
  *
  * Returns null if the file is absent (running with no seed is valid — the
- * webhook will just never match a route). Throws on a malformed file: a
- * broken config is a deployment error, not a silent-default situation.
+ * webhook will just never match a route). Throws on a malformed file, and on a
+ * route whose `match_payload` cannot be read as conditions: a broken config is
+ * a deployment error, not a silent-default situation.
  */
 export function loadSeedConfig(path: string): SeedConfig | null {
   if (!existsSync(path)) return null;
   const text = readFileSync(path, "utf8");
   const parsed = parseYaml(text) as SeedConfig | null;
   if (parsed === null || parsed === undefined) return null;
+  for (const route of parsed.routes ?? []) assertMatchPayload(route);
   return parsed;
 }
 
@@ -117,10 +152,12 @@ function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Match a value against a pattern where `*` stands for any run of characters.
- * Without a `*` this is an exact comparison. */
+/**
+ * Match a value against a pattern where `*` stands for any run of characters
+ * (newlines included), and without a `*` the comparison is exact.
+ */
 function matchGlob(pattern: string, value: string): boolean {
-  const source = pattern.split("*").map(escapeRegExp).join(".*");
+  const source = pattern.split("*").map(escapeRegExp).join("[\\s\\S]*");
   return new RegExp(`^${source}$`).test(value);
 }
 
@@ -141,9 +178,17 @@ function readPayloadPath(payload: Record<string, unknown>, path: string): unknow
  * "missing" must not read as "condition satisfied". GitHub omits fields between
  * payload versions, and silently delivering on a missing `deleted` or
  * `conclusion` is the failure this gate exists to prevent.
+ *
+ * A clause that is not a non-empty map — a scalar, `null`, an array, `{}` —
+ * never matches either. `{}` would otherwise accept everything, which is the
+ * one reading a condition must never have; {@link loadSeedConfig} rejects those
+ * shapes outright, and this keeps a hand-built config from behaving differently.
  */
 function matchesClause(clause: PayloadCondition, payload: Record<string, unknown>): boolean {
-  return Object.entries(clause).every(([path, value]) => {
+  if (typeof clause !== "object" || clause === null || Array.isArray(clause)) return false;
+  const entries = Object.entries(clause);
+  if (entries.length === 0) return false;
+  return entries.every(([path, value]) => {
     let expected = String(value);
     if (expected.includes(DEFAULT_BRANCH_TOKEN)) {
       const defaultBranch = readPayloadPath(payload, "repository.default_branch");
@@ -167,9 +212,8 @@ function matchesClause(clause: PayloadCondition, payload: Record<string, unknown
  * Clauses are OR'd, keys inside a clause are AND'd. The OR is load-bearing for
  * the shipped push route, which delivers "a newly created branch" and "an
  * update to the default branch" as two clauses; an AND-only field would force
- * that policy into two routes. An absent condition — or an empty list — accepts
- * everything, so routes written before this field keep matching their whole
- * event domain.
+ * that policy into two routes. An omitted condition accepts everything, so
+ * routes written before this field keep matching their whole event domain.
  */
 function matchPayloadConditions(
   condition: PayloadCondition | PayloadCondition[] | undefined,
@@ -177,7 +221,6 @@ function matchPayloadConditions(
 ): boolean {
   if (condition === undefined) return true;
   const clauses = Array.isArray(condition) ? condition : [condition];
-  if (clauses.length === 0) return true;
   return clauses.some((clause) => matchesClause(clause, payload));
 }
 
