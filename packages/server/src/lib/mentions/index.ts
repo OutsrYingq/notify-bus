@@ -76,18 +76,52 @@ function normalizeLogin(login: string): string {
 }
 
 /**
+ * Whether a line closes a fence opened with `opening`.
+ *
+ * A fence closes on a run of the same character that is *at least* as long as
+ * the opening one, and nothing else on the line.
+ */
+function closesFence(line: string, opening: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length < opening.length || trimmed[0] !== opening[0]) return false;
+  return [...trimmed].every((character) => character === opening[0]);
+}
+
+/**
+ * Drop fenced code blocks.
+ *
+ * Fences are found line by line rather than with one regular expression, because
+ * the length is what decides where a block ends: a four-backtick fence may
+ * contain a three-backtick one, and a regex that closes on the first three
+ * backticks it sees reads the rest of that block as text — the case that leaked
+ * a mention out of a quoted code block (#36). An unclosed fence runs to the end
+ * of the comment, as Markdown says it does.
+ */
+function stripFences(text: string): string {
+  const kept: string[] = [];
+  let opening = "";
+  for (const line of text.split("\n")) {
+    if (opening === "") {
+      const fence = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+      if (fence === undefined) kept.push(line);
+      else opening = fence;
+      continue;
+    }
+    if (closesFence(line, opening)) opening = "";
+  }
+  return kept.join("\n");
+}
+
+/**
  * Drop code before looking for mentions.
  *
  * A mention inside code is code — reading it would ping somebody because a
- * comment quoted a command. Fenced blocks (three or more backticks, or `~~~`)
- * go first, then inline code, and a run of backticks counts (` ``x`` ` is how a
- * comment writes code that itself contains a backtick).
+ * comment quoted a command. Fences go first (they decide what the rest of the
+ * comment even is), then inline code, where a run of backticks counts (` ``x`` `
+ * is how a comment writes code that itself contains a backtick).
  */
 function stripCode(text: string): string {
-  return text
-    .replace(/`{3,}[\s\S]*?`{3,}/g, " ")
-    .replace(/`+[^`\n]*`+/g, " ")
-    .replace(/~~~[\s\S]*?~~~/g, " ");
+  return stripFences(text).replace(/`+[^`\n]*`+/g, " ");
 }
 
 /** The lookup form of a channel's map. A missing or unreadable map is empty. */

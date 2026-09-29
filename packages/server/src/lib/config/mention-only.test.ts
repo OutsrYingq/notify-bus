@@ -123,6 +123,29 @@ describe("mention_only · delivery", () => {
     }
   });
 
+  it("reports what the documented shape actually answers", () => {
+    // The examples write `match_action: created`, so an edit is turned away by
+    // that whitelist before the mention gate runs: the response says `no_route`,
+    // not `mention_only`. Without the whitelist the same event records the
+    // policy itself. Both send nothing — the reason is what differs, and it is
+    // what a caller reading the response sees.
+    const documented: SeedConfig = {
+      channels: [channel("mapped", MAP)],
+      routes: [{ ...mentionRoute("mapped"), match_action: "created" }],
+    };
+    expect(resolveRoute(documented, comment("issue_comment", "carol", "@alice"))).toMatchObject({
+      kind: "matched",
+    });
+    expect(resolveRoute(documented, comment("issue_comment", "carol", "@alice", "edited"))).toEqual(
+      {
+        kind: "no_route",
+      },
+    );
+    expect(
+      resolveRoute(mapped, comment("issue_comment", "carol", "@alice", "edited")),
+    ).toMatchObject({ kind: "ignored", ignored: { reason: "mention_only" } });
+  });
+
   it("applies the same policy to a PR's line-by-line review comments", () => {
     const config: SeedConfig = {
       channels: [channel("mapped", MAP)],

@@ -100,6 +100,26 @@ describe("resolveMentionTargets", () => {
     expect(targets("````\n@alice\n````")).toBeUndefined();
   });
 
+  it("keeps a shorter fence inside a longer one as code", () => {
+    // A four-backtick fence may quote a three-backtick block. Treating a fence
+    // as closed by a *shorter* run would take the quoted block for the comment's
+    // own text, and ping whoever it names.
+    expect(targets("````\n```\n@alice\n```\n````")).toBeUndefined();
+    expect(targets("````\n```js\n@alice\n```\n````")).toBeUndefined();
+    expect(targets("````\n@alice\n```\n@bob\n````")).toBeUndefined();
+  });
+
+  it("runs an unclosed fence to the end of the comment", () => {
+    // Markdown says an unterminated fence swallows the rest, so what follows is
+    // still code — the alternative would ping somebody over a stray ```.
+    expect(targets("```\n@alice")).toBeUndefined();
+    expect(targets("look:\n~~~\n@alice and @bob")).toBeUndefined();
+  });
+
+  it("reads the text after a fence that did close", () => {
+    expect(targets("```\n@alice\n````\nbut @bob please")?.logins).toEqual(["bob"]);
+  });
+
   it("still reads the plain text around a code block", () => {
     expect(targets("```\n@bob\n```\nbut @alice please")?.logins).toEqual(["alice"]);
   });
